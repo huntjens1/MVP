@@ -10,7 +10,6 @@ dotenv.config();
 const app = express();
 const server = http.createServer(app);
 
-// Configure Socket.io with CORS enabled
 const io = new Server(server, {
   cors: {
     origin: "*",
@@ -18,7 +17,6 @@ const io = new Server(server, {
   }
 });
 
-// Statische files (zoals test.html)
 app.use(cors());
 app.use(express.static('public'));
 
@@ -32,22 +30,20 @@ if (!DEEPGRAM_API_KEY) {
   process.exit(1);
 }
 
-// Initialize Deepgram with the v4 method
 console.log('Initializing Deepgram client...');
 const deepgram = createClient(DEEPGRAM_API_KEY);
 console.log('✅ Deepgram client initialized');
 
-// Socket.io connection handler
 io.on('connection', (socket) => {
   console.log('🟢 Nieuwe Socket.io client verbonden');
   let dgConnection = null;
   let keepAliveInterval = null;
 
   try {
-    // Create a live transcription connection with v4 syntax
+    // Deepgram live verbinding
     console.log('🔄 Attempting to create Deepgram connection...');
     dgConnection = deepgram.listen.live({
-      model: "general",  // Using general model instead of nova-2 for better recognition
+      model: "general",
       language: "nl",
       smart_format: true,
       interim_results: true,
@@ -55,25 +51,20 @@ io.on('connection', (socket) => {
       punctuate: true
     });
     console.log('✅ Deepgram connection object created');
-    
-    // Handle connection open event
+
     dgConnection.on(LiveTranscriptionEvents.Open, () => {
       console.log('🎙️ Deepgram connection SUCCESSFULLY opened');
       socket.emit('status', { status: 'connected', message: 'Deepgram verbinding actief' });
-      
-      // Send initial audio data to prevent timeout
       try {
-        // Create a small silent audio buffer (8 bytes of zeros)
+        // Stiltebuffer sturen
         const silentBuffer = Buffer.from(new Uint8Array(8));
         dgConnection.send(silentBuffer);
         console.log('📣 Sent initial silent audio data to Deepgram');
       } catch (err) {
         console.error('❌ Error sending initial audio data:', err);
       }
-      
-      // Set up KeepAlive to prevent timeouts
       keepAliveInterval = setInterval(() => {
-        if (dgConnection && dgConnection.getReadyState() === 1) { // 1 = OPEN
+        if (dgConnection && dgConnection.getReadyState() === 1) {
           try {
             console.log('📢 Sending KeepAlive to Deepgram');
             dgConnection.send({ type: "KeepAlive" });
@@ -84,30 +75,23 @@ io.on('connection', (socket) => {
       }, 5000);
     });
 
-    // Handle transcription results from Deepgram
     dgConnection.on(LiveTranscriptionEvents.Transcript, (transcript) => {
       console.log('📝 Received transcript from Deepgram:', 
-                 JSON.stringify(transcript).substring(0, 200) + 
-                 (JSON.stringify(transcript).length > 200 ? '...' : ''));
-      
-      // Forward the transcript data to the client
+        JSON.stringify(transcript).substring(0, 200) + 
+        (JSON.stringify(transcript).length > 200 ? '...' : ''));
       socket.emit('transcript', transcript);
     });
 
-    // Handle Deepgram metadata events
     dgConnection.on(LiveTranscriptionEvents.Metadata, (metadata) => {
       console.log('📋 Received metadata from Deepgram:', metadata);
     });
 
-    // Handle Deepgram utterance end events
     dgConnection.on(LiveTranscriptionEvents.UtteranceEnd, (utterance) => {
       console.log('🔚 Utterance end event received:', utterance);
     });
 
-    // Handle Deepgram errors with more detailed logging
     dgConnection.on(LiveTranscriptionEvents.Error, (error) => {
       console.error('❌ Deepgram error:', error);
-      // Log full error details for debugging
       try {
         console.error('Error details:', JSON.stringify(error));
       } catch (e) {
@@ -119,11 +103,9 @@ io.on('connection', (socket) => {
       });
     });
 
-    // Handle Deepgram connection close
     dgConnection.on(LiveTranscriptionEvents.Close, (closeEvent) => {
       console.log('🔴 Deepgram verbinding gesloten', closeEvent);
-      
-      // Try to extract close message if available
+
       let closeMessage = '';
       if (closeEvent && closeEvent._closeMessage) {
         try {
@@ -133,24 +115,34 @@ io.on('connection', (socket) => {
           console.error('Error decoding close message:', err);
         }
       }
-      
+
       socket.emit('status', { 
         status: 'disconnected', 
         message: 'Deepgram verbinding gesloten',
         details: closeMessage
       });
-      
+
       if (keepAliveInterval) {
         clearInterval(keepAliveInterval);
         keepAliveInterval = null;
       }
     });
 
-    // Handle audio data from client - special handling for binary data
+    // VERBETERDE DEBUG: extra logging en type checks
     socket.on('audioData', (data) => {
+      // Diepe inspectie van binnenkomende audio
+      console.log('--------------------------------------');
       console.log(`📣 Received audio data from client: ${data.byteLength || data.length || 'unknown'} bytes`);
-      
-      if (dgConnection && dgConnection.getReadyState() === 1) { // 1 = OPEN
+      console.log('Type van binnengekomen data:', typeof data);
+      console.log('Is Buffer:', Buffer.isBuffer(data));
+      if (Buffer.isBuffer(data)) {
+        console.log('Eerste bytes:', data.slice(0, 8));
+      } else {
+        console.log('LET OP: data is GEEN Buffer. Wellicht verkeerd geïnterpreteerd door socket.io.');
+      }
+
+      // Stuur naar Deepgram als verbinding open is
+      if (dgConnection && dgConnection.getReadyState() === 1) {
         try {
           console.log('✅ Sending audio data to Deepgram');
           dgConnection.send(data);
@@ -163,7 +155,6 @@ io.on('connection', (socket) => {
       }
     });
 
-    // Add test transcript feature
     socket.on('testTranscript', () => {
       console.log('🧪 Test transcript requested');
       socket.emit('transcript', {
@@ -178,18 +169,14 @@ io.on('connection', (socket) => {
       });
     });
 
-    // Send connection status to client
     socket.emit('connectionStatus', { connected: true });
 
-    // Handle client disconnect
     socket.on('disconnect', () => {
       console.log('🔴 Socket.io client ontkoppeld');
-      
       if (keepAliveInterval) {
         clearInterval(keepAliveInterval);
         keepAliveInterval = null;
       }
-      
       if (dgConnection) {
         try {
           dgConnection.send({ type: 'CloseStream' });
@@ -200,10 +187,8 @@ io.on('connection', (socket) => {
       }
     });
 
-    // Handle client requesting to stop transcription
     socket.on('stopTranscription', () => {
       console.log('🛑 Client requested to stop transcription');
-      
       if (dgConnection) {
         try {
           dgConnection.send({ type: 'CloseStream' });
@@ -211,7 +196,6 @@ io.on('connection', (socket) => {
         } catch (err) {
           console.error('❌ Error sending CloseStream to Deepgram:', err);
         }
-        
         if (keepAliveInterval) {
           clearInterval(keepAliveInterval);
           keepAliveInterval = null;
@@ -228,7 +212,7 @@ io.on('connection', (socket) => {
   }
 });
 
-// Start the server
+// Start de server
 server.listen(PORT, () => {
   console.log(`🚀 Server draait op poort ${PORT}`);
 });
