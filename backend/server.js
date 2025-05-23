@@ -38,6 +38,8 @@ io.on('connection', (socket) => {
   console.log('🟢 Nieuwe Socket.io client verbonden');
   let dgConnection = null;
   let keepAliveInterval = null;
+  let audioBuffer = [];
+  let dgReady = false;
 
   try {
     // Deepgram live verbinding
@@ -54,6 +56,7 @@ io.on('connection', (socket) => {
 
     dgConnection.on(LiveTranscriptionEvents.Open, () => {
       console.log('🎙️ Deepgram connection SUCCESSFULLY opened');
+      dgReady = true;
       socket.emit('status', { status: 'connected', message: 'Deepgram verbinding actief' });
       try {
         // Stiltebuffer sturen
@@ -73,6 +76,15 @@ io.on('connection', (socket) => {
           }
         }
       }, 5000);
+
+      // Buffer flushen zodra verbinding open is
+      if (audioBuffer.length > 0) {
+        console.log(`⏩ Sending buffered audio chunks (${audioBuffer.length}) to Deepgram`);
+        for (const chunk of audioBuffer) {
+          dgConnection.send(chunk);
+        }
+        audioBuffer = [];
+      }
     });
 
     dgConnection.on(LiveTranscriptionEvents.Transcript, (transcript) => {
@@ -126,11 +138,12 @@ io.on('connection', (socket) => {
         clearInterval(keepAliveInterval);
         keepAliveInterval = null;
       }
+      // Buffer legen bij disconnect
+      audioBuffer = [];
+      dgReady = false;
     });
 
-    // VERBETERDE DEBUG: extra logging en type checks
     socket.on('audioData', (data) => {
-      // Diepe inspectie van binnenkomende audio
       console.log('--------------------------------------');
       console.log(`📣 Received audio data from client: ${data.byteLength || data.length || 'unknown'} bytes`);
       console.log('Type van binnengekomen data:', typeof data);
@@ -141,8 +154,7 @@ io.on('connection', (socket) => {
         console.log('LET OP: data is GEEN Buffer. Wellicht verkeerd geïnterpreteerd door socket.io.');
       }
 
-      // Stuur naar Deepgram als verbinding open is
-      if (dgConnection && dgConnection.getReadyState() === 1) {
+      if (dgConnection && dgConnection.getReadyState() === 1 && dgReady) {
         try {
           console.log('✅ Sending audio data to Deepgram');
           dgConnection.send(data);
@@ -151,7 +163,9 @@ io.on('connection', (socket) => {
           socket.emit('error', { message: 'Fout bij verzenden audio', details: err.message });
         }
       } else {
-        console.warn(`⚠️ Cannot send audio: Deepgram connection not open (state: ${dgConnection ? dgConnection.getReadyState() : 'null'})`);
+        // Nog niet open? Bufferen!
+        console.log('🔸 Deepgram nog niet klaar, audio chunk wordt gebufferd');
+        audioBuffer.push(data);
       }
     });
 
@@ -185,6 +199,9 @@ io.on('connection', (socket) => {
           console.error('❌ Error sending CloseStream to Deepgram:', err);
         }
       }
+      // Buffer legen bij disconnect
+      audioBuffer = [];
+      dgReady = false;
     });
 
     socket.on('stopTranscription', () => {
@@ -201,6 +218,9 @@ io.on('connection', (socket) => {
           keepAliveInterval = null;
         }
       }
+      // Buffer legen bij stop
+      audioBuffer = [];
+      dgReady = false;
     });
 
   } catch (error) {
@@ -209,6 +229,9 @@ io.on('connection', (socket) => {
       message: 'Kon geen verbinding maken met Deepgram', 
       details: error.message || 'Onbekende fout' 
     });
+    // Buffer altijd legen bij fatale fout
+    audioBuffer = [];
+    dgReady = false;
   }
 });
 
