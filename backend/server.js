@@ -1,7 +1,8 @@
 import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
-import { Deepgram } from '@deepgram/sdk';
+// Change this import to use createClient
+import { createClient } from '@deepgram/sdk';
 import cors from 'cors';
 import dotenv from 'dotenv';
 
@@ -25,15 +26,15 @@ app.use(express.static('public'));
 app.get('/', (_, res) => res.send('Deepgram live backend online! '));
 
 const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY;
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 3001;
 
 if (!DEEPGRAM_API_KEY) {
   console.error('❌ Deepgram API key ontbreekt! ');
   process.exit(1);
 }
 
-// Initialize Deepgram
-const deepgram = new Deepgram(DEEPGRAM_API_KEY);
+// Initialize Deepgram with the new v4 method
+const deepgram = createClient(DEEPGRAM_API_KEY);
 
 // Socket.io connection handler
 io.on('connection', (socket) => {
@@ -42,35 +43,34 @@ io.on('connection', (socket) => {
   let keepAliveInterval = null;
 
   try {
-    // Create a live transcription connection
-    dgConnection = deepgram.transcription.live({
+    // Create a live transcription connection with v4 syntax
+    dgConnection = deepgram.listen.live({
       model: 'nova-2',
       language: 'nl', // Assuming Dutch based on your file comments
       smart_format: true,
       interim_results: true
     });
 
-    // Handle Deepgram connection open
-    dgConnection.addListener('open', () => {
+    // Handle Deepgram connection open with v4 event syntax
+    dgConnection.on('Open', () => {
       console.log('🎙️ Deepgram verbinding geopend');
       socket.emit('status', { status: 'connected', message: 'Deepgram verbinding actief' });
       
       // Set up KeepAlive to prevent timeouts (critical for Railway)
       keepAliveInterval = setInterval(() => {
         if (dgConnection) {
-          dgConnection.send(JSON.stringify({ type: 'KeepAlive' }));
+          dgConnection.send({ type: 'KeepAlive' });
         }
       }, 5000);
     });
 
-    // Handle transcription results from Deepgram
-    dgConnection.addListener('transcriptReceived', (transcription) => {
-      const data = JSON.parse(transcription);
+    // Handle transcription results from Deepgram with v4 event syntax
+    dgConnection.on('Transcript', (data) => {
       socket.emit('transcript', data);
     });
 
-    // Handle Deepgram errors
-    dgConnection.addListener('error', (error) => {
+    // Handle Deepgram errors with v4 event syntax
+    dgConnection.on('Error', (error) => {
       console.error('❌ Deepgram fout:', error);
       socket.emit('error', { 
         message: 'Fout in Deepgram verbinding', 
@@ -78,8 +78,8 @@ io.on('connection', (socket) => {
       });
     });
 
-    // Handle Deepgram connection close
-    dgConnection.addListener('close', () => {
+    // Handle Deepgram connection close with v4 event syntax
+    dgConnection.on('Close', () => {
       console.log('🔴 Deepgram verbinding gesloten');
       socket.emit('status', { status: 'disconnected', message: 'Deepgram verbinding gesloten' });
       
@@ -109,15 +109,14 @@ io.on('connection', (socket) => {
       
       // Close Deepgram connection properly
       if (dgConnection) {
-        dgConnection.send(JSON.stringify({ type: 'CloseStream' }));
-        dgConnection.finish();
+        dgConnection.send({ type: 'CloseStream' });
       }
     });
 
     // Handle client requesting to stop transcription
     socket.on('stopTranscription', () => {
       if (dgConnection) {
-        dgConnection.send(JSON.stringify({ type: 'CloseStream' }));
+        dgConnection.send({ type: 'CloseStream' });
         
         // Clear KeepAlive interval
         if (keepAliveInterval) {
