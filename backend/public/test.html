@@ -1,107 +1,227 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="nl">
 <head>
-  <meta charset="UTF-8">
-  <title>CallLogix Live Transcriptie Test</title>
-  <script src="https://unpkg.com/opus-recorder/dist/recorder.min.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎙️ Live Transcriptie (Deepgram v4)</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #2563eb;
+            margin-bottom: 20px;
+        }
+        button {
+            background-color: #2563eb;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        button:hover {
+            background-color: #1d4ed8;
+        }
+        button:disabled {
+            background-color: #93c5fd;
+            cursor: not-allowed;
+        }
+        .status {
+            margin: 15px 0;
+            font-weight: bold;
+        }
+        .connected {
+            color: green;
+        }
+        .disconnected {
+            color: red;
+        }
+        .transcript {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            min-height: 200px;
+            background-color: #f9fafb;
+        }
+        .interim {
+            color: #6b7280;
+            font-style: italic;
+        }
+        .final {
+            color: #111827;
+            font-weight: 500;
+        }
+        .error {
+            color: #ef4444;
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #fee2e2;
+            border-radius: 5px;
+        }
+    </style>
 </head>
 <body>
-  <h2>🎙️ Live Transcriptie (Deepgram v4)</h2>
-  <button id="start">Start</button>
-  <button id="stop" disabled>Stop</button>
-  <pre id="output"></pre>
-  <script>
-    const startBtn = document.getElementById('start');
-    const stopBtn = document.getElementById('stop');
-    const output = document.getElementById('output');
-    let ws, recorder;
+    <h1>🎙️ Live Transcriptie (Deepgram v4)</h1>
+    
+    <button id="startButton">Start opname</button>
+    <button id="stopButton" disabled>Stop opname</button>
+    
+    <div class="status" id="status">Status: Niet verbonden</div>
+    <div class="error" id="error" style="display: none;"></div>
+    
+    <div class="transcript">
+        <div id="finalTranscript" class="final"></div>
+        <div id="interimTranscript" class="interim"></div>
+    </div>
 
-    // --- Pas deze URL aan naar jouw Railway backend ---
-    // Bijv: 'wss://calllogixmvp-production.up.railway.app/live'
-    const wsUrl = 'wss://mvp-production-6208.up.railway.app/live';
+    <script>
+        let socket;
+        let mediaRecorder;
+        let audioStream;
+        let finalTranscriptText = '';
 
-    startBtn.onclick = () => {
-      output.textContent = '';
-      console.log('[UI] Start button clicked');
-      ws = new WebSocket(wsUrl);
+        // DOM elements
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const statusElement = document.getElementById('status');
+        const errorElement = document.getElementById('error');
+        const finalTranscriptElement = document.getElementById('finalTranscript');
+        const interimTranscriptElement = document.getElementById('interimTranscript');
 
-      ws.onopen = () => {
-        console.log('[WS] WebSocket verbonden:', wsUrl);
+        // Start recording button click handler
+        startButton.addEventListener('click', startRecording);
+        stopButton.addEventListener('click', stopRecording);
 
-        recorder = new Recorder({
-          encoderPath: 'https://unpkg.com/opus-recorder/dist/encoderWorker.min.js',
-          streamPages: true,
-          maxBuffersPerPage: 1,
-          numberOfChannels: 1,
-          encoderSampleRate: 48000,
-        });
+        async function startRecording() {
+            try {
+                // Reset UI
+                finalTranscriptText = '';
+                finalTranscriptElement.textContent = '';
+                interimTranscriptElement.textContent = '';
+                errorElement.style.display = 'none';
+                
+                // Update button states
+                startButton.disabled = true;
+                stopButton.disabled = false;
+                statusElement.textContent = 'Status: Microfoon toegang aanvragen...';
+                statusElement.className = 'status';
 
-        recorder.ondataavailable = (typedArray) => {
-          if (ws.readyState === 1) {
-            ws.send(typedArray);
-            console.log('[AUDIO] Verstuur OGG chunk:', typedArray.length, 'bytes');
-          }
-        };
+                // Get microphone access
+                audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // Create socket.io connection
+                socket = io();
+                
+                // Socket connection event handlers
+                socket.on('connect', () => {
+                    statusElement.textContent = 'Status: Verbonden met server, wacht op Deepgram...';
+                });
 
-        recorder.start().then(() => {
-          console.log('[AUDIO] Recorder gestart!');
-          startBtn.disabled = true;
-          stopBtn.disabled = false;
-        }).catch(err => {
-          console.error('[AUDIO] Recorder start failed:', err);
-          output.textContent += '[AUDIO] Recorder start failed: ' + err + '\n';
-          ws.close();
-        });
-      };
+                socket.on('status', (data) => {
+                    if (data.status === 'connected') {
+                        statusElement.textContent = 'Status: Deepgram actief - Transcriptie gestart!';
+                        statusElement.className = 'status connected';
+                    } else if (data.status === 'disconnected') {
+                        statusElement.textContent = 'Status: Verbinding met Deepgram verbroken';
+                        statusElement.className = 'status disconnected';
+                    }
+                });
 
-      ws.onmessage = (e) => {
-        try {
-          const msg = JSON.parse(e.data);
-          if (msg.transcript) {
-            output.textContent += msg.transcript + '\n';
-            console.log('[WS] Transcript ontvangen:', msg.transcript);
-          } else if (msg.error) {
-            output.textContent += '[ERROR] ' + msg.error + '\n';
-            console.error('[WS] Error van backend:', msg.error);
-          }
-        } catch (err) {
-          console.warn('[WS] JSON parse error:', err);
+                socket.on('transcript', (data) => {
+                    // Handle transcription data
+                    if (data.channel && data.channel.alternatives && data.channel.alternatives.length > 0) {
+                        const transcript = data.channel.alternatives[0].transcript || '';
+                        
+                        if (transcript) {
+                            if (data.is_final) {
+                                // Final transcript
+                                finalTranscriptText += ' ' + transcript;
+                                finalTranscriptElement.textContent = finalTranscriptText;
+                                interimTranscriptElement.textContent = '';
+                            } else {
+                                // Interim transcript
+                                interimTranscriptElement.textContent = transcript;
+                            }
+                        }
+                    }
+                });
+
+                socket.on('error', (error) => {
+                    console.error('Socket error:', error);
+                    errorElement.textContent = `Fout: ${error.message || 'Onbekende fout'}`;
+                    errorElement.style.display = 'block';
+                });
+
+                socket.on('disconnect', () => {
+                    statusElement.textContent = 'Status: Verbinding met server verbroken';
+                    statusElement.className = 'status disconnected';
+                    stopRecording();
+                });
+
+                // Create MediaRecorder for audio
+                mediaRecorder = new MediaRecorder(audioStream, {
+                    mimeType: 'audio/webm',
+                });
+
+                // Send audio data to server
+                mediaRecorder.addEventListener('dataavailable', (event) => {
+                    if (event.data.size > 0 && socket && socket.connected) {
+                        socket.emit('audioData', event.data);
+                    }
+                });
+
+                // Start recording
+                mediaRecorder.start(250); // Capture audio in 250ms chunks
+                
+            } catch (error) {
+                console.error('Error starting recording:', error);
+                errorElement.textContent = `Fout bij starten opname: ${error.message}`;
+                errorElement.style.display = 'block';
+                statusElement.textContent = 'Status: Fout bij opstarten';
+                statusElement.className = 'status disconnected';
+                startButton.disabled = false;
+                stopButton.disabled = true;
+            }
         }
-      };
 
-      ws.onclose = (e) => {
-        console.log('[WS] WebSocket gesloten:', e);
-        startBtn.disabled = false;
-        stopBtn.disabled = true;
-      };
-      ws.onerror = (e) => {
-        console.error('[WS] WebSocket fout:', e);
-        output.textContent += '[WS] WebSocket fout: ' + e.message + '\n';
-      };
-    };
+        function stopRecording() {
+            // Stop MediaRecorder if it exists
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+            
+            // Stop audio tracks
+            if (audioStream) {
+                audioStream.getTracks().forEach(track => track.stop());
+                audioStream = null;
+            }
+            
+            // Tell server to stop transcription
+            if (socket && socket.connected) {
+                socket.emit('stopTranscription');
+                socket.disconnect();
+            }
+            
+            // Update UI
+            startButton.disabled = false;
+            stopButton.disabled = true;
+            statusElement.textContent = 'Status: Opname gestopt';
+            statusElement.className = 'status';
+        }
 
-    stopBtn.onclick = () => {
-      if (recorder) {
-        recorder.stop();
-        console.log('[UI] Recorder gestopt!');
-      }
-      if (ws) {
-        ws.close();
-        console.log('[UI] WebSocket gesloten!');
-      }
-      startBtn.disabled = false;
-      stopBtn.disabled = true;
-    };
-
-    // Vraag direct bij laden om microfoonrechten
-    navigator.mediaDevices.getUserMedia({ audio: true })
-      .then(() => console.log('[AUDIO] Microfoonrechten toegekend!'))
-      .catch(err => {
-        output.textContent += '[AUDIO] Geen microfoonrechten: ' + err + '\n';
-        console.error('[AUDIO] Geen microfoonrechten:', err);
-      });
-
-    console.log('[INFO] test.html geladen!');
-  </script>
+        // Handle page unload to clean up resources
+        window.addEventListener('beforeunload', () => {
+            stopRecording();
+        });
+    </script>
 </body>
 </html>
