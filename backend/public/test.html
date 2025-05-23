@@ -12,6 +12,7 @@
             margin: 0 auto;
             padding: 20px;
             line-height: 1.6;
+            position: relative;
         }
         h1 {
             color: #2563eb;
@@ -26,18 +27,20 @@
             cursor: pointer;
             margin: 10px 0;
             font-weight: bold;
+            transition: background-color 0.3s;
         }
-        button:hover {
+        button:hover:not(:disabled) {
             background-color: #1d4ed8;
         }
         button:disabled {
             background-color: #93c5fd;
             cursor: not-allowed;
+            opacity: 0.7;
         }
         .test-btn {
             background-color: #10b981;
         }
-        .test-btn:hover {
+        .test-btn:hover:not(:disabled) {
             background-color: #059669;
         }
         .status {
@@ -121,6 +124,23 @@
             background-color: #3b82f6;
             transition: width 0.1s ease;
         }
+        .connection-status {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .connected-status {
+            background-color: #dcfce7;
+            color: #166534;
+        }
+        .disconnected-status {
+            background-color: #fecaca;
+            color: #b91c1c;
+        }
     </style>
     <script>
         // Monitor and log all errors in the console
@@ -131,6 +151,8 @@
 </head>
 <body>
     <h1>🎙️ Live Transcriptie (Deepgram v4)</h1>
+    
+    <div class="connection-status disconnected-status" id="connectionStatus">Niet verbonden</div>
     
     <div class="controls">
         <button id="startButton">Start opname</button>
@@ -162,18 +184,27 @@
         let silenceDetectionInterval;
         let lastAudioLevel = 0;
         let hasSpokenSinceConnection = false;
+        let isConnected = false;
 
         // DOM elements
         const startButton = document.getElementById('startButton');
         const stopButton = document.getElementById('stopButton');
         const testButton = document.getElementById('testButton');
         const statusElement = document.getElementById('status');
+        const connectionStatus = document.getElementById('connectionStatus');
         const speakIndicator = document.getElementById('speakIndicator');
         const audioLevelBar = document.getElementById('audioLevelBar');
         const errorElement = document.getElementById('error');
         const finalTranscriptElement = document.getElementById('finalTranscript');
         const interimTranscriptElement = document.getElementById('interimTranscript');
         const debugBox = document.getElementById('debugBox');
+        
+        // Update button states
+        function updateButtonStates(isRecording) {
+            startButton.disabled = isRecording;
+            stopButton.disabled = !isRecording;
+            testButton.disabled = !isRecording; // Only enable test button when recording
+        }
         
         // Debug function to log to both console and debug box
         function debug(message, obj) {
@@ -210,17 +241,42 @@
         function testTranscription() {
             debug('Test transcription button clicked');
             
-            if (socket && socket.connected) {
+            if (socket && socket.connected && isConnected) {
                 debug('Sending test transcript request to server');
                 socket.emit('testTranscript');
                 speakIndicator.textContent = 'Test transcriptie verzonden...';
                 speakIndicator.style.backgroundColor = '#fef3c7';
                 speakIndicator.style.color = '#92400e';
             } else {
-                debug('Cannot test: Socket not connected');
-                errorElement.textContent = 'Kan niet testen: Geen verbinding met server';
-                errorElement.style.display = 'block';
+                debug('Socket not connected, using local test');
+                testLocalTranscript();
             }
+        }
+        
+        // Function to test with a local transcript
+        function testLocalTranscript() {
+            const testData = {
+                is_final: true,
+                channel: {
+                    alternatives: [
+                        {
+                            transcript: 'Dit is een lokale test van de transcriptie functionaliteit.'
+                        }
+                    ]
+                }
+            };
+            
+            handleTranscript(testData);
+            speakIndicator.textContent = 'Lokale test transcriptie verwerkt';
+            speakIndicator.style.backgroundColor = '#fef3c7';
+            speakIndicator.style.color = '#92400e';
+            
+            // Reset after 3 seconds
+            setTimeout(() => {
+                speakIndicator.textContent = 'Druk op Start om te beginnen...';
+                speakIndicator.style.backgroundColor = '#e0f2fe';
+                speakIndicator.style.color = '#0284c7';
+            }, 3000);
         }
 
         // Function to handle transcript data
@@ -308,13 +364,15 @@
                 errorElement.style.display = 'none';
                 debugBox.innerHTML = ''; // Clear debug box
                 hasSpokenSinceConnection = false;
+                isConnected = false;
                 
                 // Update button states
-                startButton.disabled = true;
-                stopButton.disabled = false;
+                updateButtonStates(true);
                 statusElement.textContent = 'Status: Microfoon toegang aanvragen...';
                 statusElement.className = 'status';
                 speakIndicator.textContent = 'Microfoon wordt geactiveerd...';
+                connectionStatus.textContent = 'Niet verbonden';
+                connectionStatus.className = 'connection-status disconnected-status';
 
                 // Get microphone access with optimal settings for Deepgram
                 debug('Requesting microphone access...');
@@ -345,6 +403,8 @@
                 socket.on('connect', () => {
                     debug('✓ Connected to server');
                     statusElement.textContent = 'Status: Verbonden met server, wacht op Deepgram...';
+                    connectionStatus.textContent = 'Verbonden met server';
+                    connectionStatus.className = 'connection-status connected-status';
                     
                     // Set timeout to detect if Deepgram doesn't connect
                     connectionTimeout = setTimeout(() => {
@@ -352,6 +412,13 @@
                             debug('⚠️ Deepgram connection timeout - no response after 10 seconds');
                             errorElement.textContent = 'Timeout: Geen reactie van Deepgram na 10 seconden';
                             errorElement.style.display = 'block';
+                            
+                            // Auto-hide error after 5 seconds
+                            setTimeout(() => {
+                                if (errorElement.style.display === 'block') {
+                                    errorElement.style.display = 'none';
+                                }
+                            }, 5000);
                         }
                     }, 10000);
                 });
@@ -361,6 +428,9 @@
                     if (data.status === 'connected') {
                         statusElement.textContent = 'Status: Deepgram actief - Transcriptie gestart!';
                         statusElement.className = 'status connected';
+                        connectionStatus.textContent = 'Volledig verbonden';
+                        connectionStatus.className = 'connection-status connected-status';
+                        isConnected = true;
                         
                         // Encourage the user to speak immediately
                         speakIndicator.textContent = '🗣️ SPREEK NU! Begin direct met praten...';
@@ -385,6 +455,9 @@
                             statusElement.textContent += ` (${data.details})`;
                         }
                         statusElement.className = 'status disconnected';
+                        connectionStatus.textContent = 'Verbinding verbroken';
+                        connectionStatus.className = 'connection-status disconnected-status';
+                        isConnected = false;
                     }
                 });
 
@@ -399,18 +472,37 @@
                         errorElement.textContent += ` (${error.details})`;
                     }
                     errorElement.style.display = 'block';
+                    
+                    // Auto-hide error after 5 seconds
+                    setTimeout(() => {
+                        if (errorElement.style.display === 'block') {
+                            errorElement.style.display = 'none';
+                        }
+                    }, 5000);
                 });
 
                 socket.on('connect_error', (error) => {
                     debug('⚠️ Socket.io connection error:', error);
                     errorElement.textContent = `Connection error: ${error.message}`;
                     errorElement.style.display = 'block';
+                    connectionStatus.textContent = 'Verbinding mislukt';
+                    connectionStatus.className = 'connection-status disconnected-status';
+                    
+                    // Auto-hide error after 5 seconds
+                    setTimeout(() => {
+                        if (errorElement.style.display === 'block') {
+                            errorElement.style.display = 'none';
+                        }
+                    }, 5000);
                 });
 
                 socket.on('disconnect', () => {
                     debug('Socket disconnected from server');
                     statusElement.textContent = 'Status: Verbinding met server verbroken';
                     statusElement.className = 'status disconnected';
+                    connectionStatus.textContent = 'Niet verbonden';
+                    connectionStatus.className = 'connection-status disconnected-status';
+                    isConnected = false;
                     stopRecording();
                 });
 
@@ -449,8 +541,14 @@
                 errorElement.style.display = 'block';
                 statusElement.textContent = 'Status: Fout bij opstarten';
                 statusElement.className = 'status disconnected';
-                startButton.disabled = false;
-                stopButton.disabled = true;
+                updateButtonStates(false);
+                
+                // Auto-hide error after 5 seconds
+                setTimeout(() => {
+                    if (errorElement.style.display === 'block') {
+                        errorElement.style.display = 'none';
+                    }
+                }, 5000);
             }
         }
 
@@ -503,21 +601,22 @@
                 debug('Disconnecting from server');
                 socket.disconnect();
             }
-            
             // Update UI
-            startButton.disabled = false;
-            stopButton.disabled = true;
+            updateButtonStates(false);
             statusElement.textContent = 'Status: Opname gestopt';
             statusElement.className = 'status';
             speakIndicator.textContent = 'Druk op Start om te beginnen...';
             speakIndicator.style.backgroundColor = '#e0f2fe';
             speakIndicator.style.color = '#0284c7';
             speakIndicator.classList.remove('speak-now');
+            connectionStatus.textContent = 'Niet verbonden';
+            connectionStatus.className = 'connection-status disconnected-status';
+            isConnected = false;
             
             debug('Recording fully stopped');
-        }
+            }
 
-        // Handle page unload to clean up resources
+            // Handle page unload to clean up resources
         window.addEventListener('beforeunload', () => {
             debug('Page unloading, cleaning up resources');
             stopRecording();

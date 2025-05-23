@@ -47,12 +47,12 @@ io.on('connection', (socket) => {
     // Create a live transcription connection with v4 syntax
     console.log('🔄 Attempting to create Deepgram connection...');
     dgConnection = deepgram.listen.live({
-      model: 'nova-2',
-      language: 'nl',
+      model: "general",  // Using general model instead of nova-2 for better recognition
+      language: "nl",
       smart_format: true,
       interim_results: true,
-      endpointing: true,  // Enable endpointing to better detect speech segments
-      punctuate: true     // Ensure punctuation is applied
+      endpointing: true,
+      punctuate: true
     });
     console.log('✅ Deepgram connection object created');
     
@@ -86,7 +86,9 @@ io.on('connection', (socket) => {
 
     // Handle transcription results from Deepgram
     dgConnection.on(LiveTranscriptionEvents.Transcript, (transcript) => {
-      console.log('📝 Received transcript from Deepgram:', JSON.stringify(transcript).substring(0, 200) + (transcript.length > 200 ? '...' : ''));
+      console.log('📝 Received transcript from Deepgram:', 
+                 JSON.stringify(transcript).substring(0, 200) + 
+                 (JSON.stringify(transcript).length > 200 ? '...' : ''));
       
       // Forward the transcript data to the client
       socket.emit('transcript', transcript);
@@ -169,12 +171,15 @@ io.on('connection', (socket) => {
         channel: {
           alternatives: [
             {
-              transcript: 'Dit is een test van de transcriptie functionaliteit.'
+              transcript: 'Dit is een test van de transcriptie functionaliteit van de server.'
             }
           ]
         }
       });
     });
+
+    // Send connection status to client
+    socket.emit('connectionStatus', { connected: true });
 
     // Handle client disconnect
     socket.on('disconnect', () => {
