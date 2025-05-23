@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>CallLogix Live Transcriptie Test</title>
+  <script src="https://unpkg.com/opus-recorder/dist/recorder.min.js"></script>
+</head>
+<body>
+  <h2>🎙️ Live Transcriptie (Deepgram v4)</h2>
+  <button id="start">Start</button>
+  <button id="stop" disabled>Stop</button>
+  <pre id="output"></pre>
+  <script>
+    const startBtn = document.getElementById('start');
+    const stopBtn = document.getElementById('stop');
+    const output = document.getElementById('output');
+    let ws, recorder;
+
+    // --- Pas deze URL aan naar jouw Railway backend ---
+    // Bijv: 'wss://calllogixmvp-production.up.railway.app/live'
+    const wsUrl = 'wss://calllogixmvp-production.up.railway.app/live';
+
+    startBtn.onclick = () => {
+      output.textContent = '';
+      console.log('[UI] Start button clicked');
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        console.log('[WS] WebSocket verbonden:', wsUrl);
+
+        recorder = new Recorder({
+          encoderPath: 'https://unpkg.com/opus-recorder/dist/encoderWorker.min.js',
+          streamPages: true,
+          maxBuffersPerPage: 1,
+          numberOfChannels: 1,
+          encoderSampleRate: 48000,
+        });
+
+        recorder.ondataavailable = (typedArray) => {
+          if (ws.readyState === 1) {
+            ws.send(typedArray);
+            console.log('[AUDIO] Verstuur OGG chunk:', typedArray.length, 'bytes');
+          }
+        };
+
+        recorder.start().then(() => {
+          console.log('[AUDIO] Recorder gestart!');
+          startBtn.disabled = true;
+          stopBtn.disabled = false;
+        }).catch(err => {
+          console.error('[AUDIO] Recorder start failed:', err);
+          output.textContent += '[AUDIO] Recorder start failed: ' + err + '\n';
+          ws.close();
+        });
+      };
+
+      ws.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.transcript) {
+            output.textContent += msg.transcript + '\n';
+            console.log('[WS] Transcript ontvangen:', msg.transcript);
+          } else if (msg.error) {
+            output.textContent += '[ERROR] ' + msg.error + '\n';
+            console.error('[WS] Error van backend:', msg.error);
+          }
+        } catch (err) {
+          console.warn('[WS] JSON parse error:', err);
+        }
+      };
+
+      ws.onclose = (e) => {
+        console.log('[WS] WebSocket gesloten:', e);
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+      };
+      ws.onerror = (e) => {
+        console.error('[WS] WebSocket fout:', e);
+        output.textContent += '[WS] WebSocket fout: ' + e.message + '\n';
+      };
+    };
+
+    stopBtn.onclick = () => {
+      if (recorder) {
+        recorder.stop();
+        console.log('[UI] Recorder gestopt!');
+      }
+      if (ws) {
+        ws.close();
+        console.log('[UI] WebSocket gesloten!');
+      }
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+    };
+
+    // Vraag direct bij laden om microfoonrechten
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then(() => console.log('[AUDIO] Microfoonrechten toegekend!'))
+      .catch(err => {
+        output.textContent += '[AUDIO] Geen microfoonrechten: ' + err + '\n';
+        console.error('[AUDIO] Geen microfoonrechten:', err);
+      });
+
+    console.log('[INFO] test.html geladen!');
+  </script>
+</body>
+</html>
