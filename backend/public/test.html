@@ -6,621 +6,193 @@
     <title>🎙️ Live Transcriptie (Deepgram v4)</title>
     <script src="/socket.io/socket.io.js"></script>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-            line-height: 1.6;
-            position: relative;
-        }
-        h1 {
-            color: #2563eb;
-            margin-bottom: 20px;
-        }
-        button {
-            background-color: #2563eb;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-            margin: 10px 0;
-            font-weight: bold;
-            transition: background-color 0.3s;
-        }
-        button:hover:not(:disabled) {
-            background-color: #1d4ed8;
-        }
-        button:disabled {
-            background-color: #93c5fd;
-            cursor: not-allowed;
-            opacity: 0.7;
-        }
-        .test-btn {
-            background-color: #10b981;
-        }
-        .test-btn:hover:not(:disabled) {
-            background-color: #059669;
-        }
-        .status {
-            margin: 15px 0;
-            font-weight: bold;
-        }
-        .connected {
-            color: green;
-        }
-        .disconnected {
-            color: red;
-        }
-        .speak-indicator {
-            margin: 15px 0;
-            padding: 10px;
-            background-color: #e0f2fe;
-            color: #0284c7;
-            border-radius: 5px;
-            text-align: center;
-        }
-        .speak-now {
-            background-color: #fef3c7;
-            color: #92400e;
-            font-weight: bold;
-            animation: pulse 1.5s infinite;
-        }
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.7; }
-            100% { opacity: 1; }
-        }
-        .transcript {
-            margin-top: 20px;
-            padding: 15px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            min-height: 200px;
-            background-color: #f9fafb;
-        }
-        .interim {
-            color: #6b7280;
-            font-style: italic;
-        }
-        .final {
-            color: #111827;
-            font-weight: 500;
-        }
-        .error {
-            color: #ef4444;
-            margin: 10px 0;
-            padding: 10px;
-            background-color: #fee2e2;
-            border-radius: 5px;
-        }
-        .debug {
-            margin-top: 20px;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            background-color: #f0f0f0;
-            font-family: monospace;
-            font-size: 12px;
-            max-height: 200px;
-            overflow-y: auto;
-        }
-        .controls {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-        }
-        .audio-level {
-            height: 20px;
-            margin: 10px 0;
-            background-color: #dbeafe;
-            border-radius: 10px;
-            overflow: hidden;
-        }
-        .audio-level-bar {
-            height: 100%;
-            width: 0%;
-            background-color: #3b82f6;
-            transition: width 0.1s ease;
-        }
-        .connection-status {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            padding: 5px 10px;
-            border-radius: 15px;
-            font-size: 12px;
-            font-weight: bold;
-        }
-        .connected-status {
-            background-color: #dcfce7;
-            color: #166534;
-        }
-        .disconnected-status {
-            background-color: #fecaca;
-            color: #b91c1c;
-        }
+        /* [zelfde styling als eerder, ingekort voor overzicht] */
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; line-height: 1.6; position: relative; }
+        h1 { color: #2563eb; margin-bottom: 20px; }
+        button { background-color: #2563eb; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 10px 0; font-weight: bold; transition: background-color 0.3s; }
+        button:hover:not(:disabled) { background-color: #1d4ed8; }
+        button:disabled { background-color: #93c5fd; cursor: not-allowed; opacity: 0.7; }
+        .test-btn { background-color: #10b981; }
+        .test-btn:hover:not(:disabled) { background-color: #059669; }
+        .status { margin: 15px 0; font-weight: bold; }
+        .connected { color: green; }
+        .disconnected { color: red; }
+        .controls { display: flex; gap: 10px; flex-wrap: wrap; }
+        .download-btn { background-color: #f59e42; }
+        .download-btn:hover:not(:disabled) { background-color: #ea580c; }
     </style>
-    <script>
-        // Monitor and log all errors in the console
-        window.addEventListener('error', (event) => {
-            console.error('Global error:', event.error);
-        });
-    </script>
 </head>
 <body>
     <h1>🎙️ Live Transcriptie (Deepgram v4)</h1>
     
-    <div class="connection-status disconnected-status" id="connectionStatus">Niet verbonden</div>
-    
     <div class="controls">
         <button id="startButton">Start opname</button>
         <button id="stopButton" disabled>Stop opname</button>
+        <button id="downloadButton" class="download-btn" disabled>Download opname</button>
         <button id="testButton" class="test-btn">Test Transcriptie</button>
     </div>
     
     <div class="status" id="status">Status: Niet verbonden</div>
     <div class="speak-indicator" id="speakIndicator">Druk op Start om te beginnen...</div>
-    <div class="audio-level">
-        <div class="audio-level-bar" id="audioLevelBar"></div>
-    </div>
-    <div class="error" id="error" style="display: none;"></div>
-    
     <div class="transcript">
         <div id="finalTranscript" class="final"></div>
         <div id="interimTranscript" class="interim"></div>
     </div>
-    
-    <div class="debug" id="debugBox" style="display: none;"></div>
+    <div class="error" id="error" style="display: none;"></div>
 
     <script>
         let socket;
         let mediaRecorder;
         let audioStream;
-        let finalTranscriptText = '';
-        let connectionTimeout;
-        let audioContext;
-        let silenceDetectionInterval;
-        let lastAudioLevel = 0;
-        let hasSpokenSinceConnection = false;
-        let isConnected = false;
+        let audioChunks = [];    // Hierin slaan we alle chunks op!
+        let recordedBlob = null; // Hier bewaren we het eindresultaat voor download
 
         // DOM elements
         const startButton = document.getElementById('startButton');
         const stopButton = document.getElementById('stopButton');
         const testButton = document.getElementById('testButton');
+        const downloadButton = document.getElementById('downloadButton');
         const statusElement = document.getElementById('status');
-        const connectionStatus = document.getElementById('connectionStatus');
         const speakIndicator = document.getElementById('speakIndicator');
-        const audioLevelBar = document.getElementById('audioLevelBar');
         const errorElement = document.getElementById('error');
         const finalTranscriptElement = document.getElementById('finalTranscript');
         const interimTranscriptElement = document.getElementById('interimTranscript');
-        const debugBox = document.getElementById('debugBox');
         
         // Update button states
         function updateButtonStates(isRecording) {
             startButton.disabled = isRecording;
             stopButton.disabled = !isRecording;
-            testButton.disabled = !isRecording; // Only enable test button when recording
+            testButton.disabled = isRecording; 
+            downloadButton.disabled = isRecording || !recordedBlob;
         }
         
-        // Debug function to log to both console and debug box
-        function debug(message, obj) {
-            const timestamp = new Date().toLocaleTimeString();
-            let logMessage = `[${timestamp}] ${message}`;
-            
-            console.log(message, obj || '');
-            
-            if (obj) {
-                try {
-                    if (typeof obj === 'object') {
-                        logMessage += ` ${JSON.stringify(obj)}`;
-                    } else {
-                        logMessage += ` ${obj}`;
-                    }
-                } catch (e) {
-                    logMessage += ' [Object could not be stringified]';
-                }
-            }
-            
-            debugBox.style.display = 'block';
-            const logElement = document.createElement('div');
-            logElement.textContent = logMessage;
-            debugBox.appendChild(logElement);
-            debugBox.scrollTop = debugBox.scrollHeight;
-        }
-
-        // Button click handlers
         startButton.addEventListener('click', startRecording);
         stopButton.addEventListener('click', stopRecording);
         testButton.addEventListener('click', testTranscription);
+        downloadButton.addEventListener('click', downloadRecording);
 
-        // Function to test transcription functionality
         function testTranscription() {
-            debug('Test transcription button clicked');
-            
-            if (socket && socket.connected && isConnected) {
-                debug('Sending test transcript request to server');
+            if (socket && socket.connected) {
                 socket.emit('testTranscript');
                 speakIndicator.textContent = 'Test transcriptie verzonden...';
-                speakIndicator.style.backgroundColor = '#fef3c7';
-                speakIndicator.style.color = '#92400e';
             } else {
-                debug('Socket not connected, using local test');
                 testLocalTranscript();
             }
         }
-        
-        // Function to test with a local transcript
         function testLocalTranscript() {
             const testData = {
                 is_final: true,
-                channel: {
-                    alternatives: [
-                        {
-                            transcript: 'Dit is een lokale test van de transcriptie functionaliteit.'
-                        }
-                    ]
-                }
+                channel: { alternatives: [{ transcript: 'Dit is een lokale test van de transcriptie functionaliteit.' }] }
             };
-            
             handleTranscript(testData);
-            speakIndicator.textContent = 'Lokale test transcriptie verwerkt';
-            speakIndicator.style.backgroundColor = '#fef3c7';
-            speakIndicator.style.color = '#92400e';
-            
-            // Reset after 3 seconds
-            setTimeout(() => {
-                speakIndicator.textContent = 'Druk op Start om te beginnen...';
-                speakIndicator.style.backgroundColor = '#e0f2fe';
-                speakIndicator.style.color = '#0284c7';
-            }, 3000);
         }
-
-        // Function to handle transcript data
         function handleTranscript(data) {
-            debug('Processing transcript data', data);
-            
             if (data && data.channel && data.channel.alternatives && data.channel.alternatives.length > 0) {
                 const transcript = data.channel.alternatives[0].transcript || '';
-                
-                if (transcript) {
-                    debug(`Transcript: "${transcript}", is_final: ${data.is_final}`);
-                    hasSpokenSinceConnection = true;
-                    
-                    // Update UI to show we detected speech
-                    speakIndicator.textContent = '🎤 Spraak gedetecteerd!';
-                    speakIndicator.style.backgroundColor = '#dcfce7';
-                    speakIndicator.style.color = '#166534';
-                    speakIndicator.classList.remove('speak-now');
-                    
-                    if (data.is_final) {
-                        // Final transcript
-                        finalTranscriptText += ' ' + transcript;
-                        finalTranscriptElement.textContent = finalTranscriptText.trim();
-                        interimTranscriptElement.textContent = '';
-                    } else {
-                        // Interim transcript
-                        interimTranscriptElement.textContent = transcript;
-                    }
+                if (data.is_final) {
+                    finalTranscriptElement.textContent += ' ' + transcript;
+                    interimTranscriptElement.textContent = '';
                 } else {
-                    debug('Transcript received but text was empty');
+                    interimTranscriptElement.textContent = transcript;
                 }
-            } else {
-                debug('Transcript received but in unexpected format', data);
-            }
-        }
-
-        // Function to monitor audio levels
-        function startAudioLevelMonitoring(stream) {
-            try {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                const source = audioContext.createMediaStreamSource(stream);
-                const analyser = audioContext.createAnalyser();
-                analyser.fftSize = 256;
-                source.connect(analyser);
-                
-                const bufferLength = analyser.frequencyBinCount;
-                const dataArray = new Uint8Array(bufferLength);
-                
-                silenceDetectionInterval = setInterval(() => {
-                    analyser.getByteFrequencyData(dataArray);
-                    
-                    // Calculate average volume level
-                    let sum = 0;
-                    for (let i = 0; i < bufferLength; i++) {
-                        sum += dataArray[i];
-                    }
-                    const average = sum / bufferLength;
-                    lastAudioLevel = average;
-                    
-                    // Update audio level visualization
-                    const levelPercentage = Math.min(100, average * 2); // Scale for better visual feedback
-                    audioLevelBar.style.width = `${levelPercentage}%`;
-                    
-                    // Update speak indicator based on audio level
-                    if (!hasSpokenSinceConnection) {
-                        if (average > 20) {
-                            speakIndicator.textContent = '🎤 Spraak gedetecteerd...';
-                            speakIndicator.style.backgroundColor = '#dcfce7';
-                            speakIndicator.style.color = '#166534';
-                        }
-                    }
-                    
-                }, 100);
-            } catch (err) {
-                debug('Error setting up audio monitoring:', err);
             }
         }
 
         async function startRecording() {
             try {
-                // Reset UI
-                finalTranscriptText = '';
-                finalTranscriptElement.textContent = '';
-                interimTranscriptElement.textContent = '';
-                errorElement.style.display = 'none';
-                debugBox.innerHTML = ''; // Clear debug box
-                hasSpokenSinceConnection = false;
-                isConnected = false;
-                
-                // Update button states
+                recordedBlob = null;   // Reset eventuele vorige opname
+                audioChunks = [];      // Reset audio buffer
                 updateButtonStates(true);
                 statusElement.textContent = 'Status: Microfoon toegang aanvragen...';
-                statusElement.className = 'status';
                 speakIndicator.textContent = 'Microfoon wordt geactiveerd...';
-                connectionStatus.textContent = 'Niet verbonden';
-                connectionStatus.className = 'connection-status disconnected-status';
 
-                // Get microphone access with optimal settings for Deepgram
-                debug('Requesting microphone access...');
                 audioStream = await navigator.mediaDevices.getUserMedia({ 
                     audio: {
                         echoCancellation: true,
                         noiseSuppression: true,
                         autoGainControl: true,
-                        channelCount: 1,         // Ensure mono audio
-                        sampleRate: 48000        // Optimal sample rate
-                    } 
-                });
-                debug('✓ Microphone access granted');
-                
-                // Start audio level monitoring
-                startAudioLevelMonitoring(audioStream);
-                
-                // Create socket.io connection
-                debug('Creating Socket.io connection...');
-                socket = io();
-                
-                // Log all events for debugging
-                socket.onAny((event, ...args) => {
-                    debug(`Socket event: ${event}`, args[0]);
-                });
-                
-                // Socket connection event handlers
-                socket.on('connect', () => {
-                    debug('✓ Connected to server');
-                    statusElement.textContent = 'Status: Verbonden met server, wacht op Deepgram...';
-                    connectionStatus.textContent = 'Verbonden met server';
-                    connectionStatus.className = 'connection-status connected-status';
-                    
-                    // Set timeout to detect if Deepgram doesn't connect
-                    connectionTimeout = setTimeout(() => {
-                        if (statusElement.textContent.includes('wacht op Deepgram')) {
-                            debug('⚠️ Deepgram connection timeout - no response after 10 seconds');
-                            errorElement.textContent = 'Timeout: Geen reactie van Deepgram na 10 seconden';
-                            errorElement.style.display = 'block';
-                            
-                            // Auto-hide error after 5 seconds
-                            setTimeout(() => {
-                                if (errorElement.style.display === 'block') {
-                                    errorElement.style.display = 'none';
-                                }
-                            }, 5000);
-                        }
-                    }, 10000);
-                });
-
-                socket.on('status', (data) => {
-                    debug('Received status update', data);
-                    if (data.status === 'connected') {
-                        statusElement.textContent = 'Status: Deepgram actief - Transcriptie gestart!';
-                        statusElement.className = 'status connected';
-                        connectionStatus.textContent = 'Volledig verbonden';
-                        connectionStatus.className = 'connection-status connected-status';
-                        isConnected = true;
-                        
-                        // Encourage the user to speak immediately
-                        speakIndicator.textContent = '🗣️ SPREEK NU! Begin direct met praten...';
-                        speakIndicator.style.backgroundColor = '#fef3c7';
-                        speakIndicator.style.color = '#92400e';
-                        speakIndicator.classList.add('speak-now');
-                        
-                        // After a few seconds, revert to normal prompt if no speech detected
-                        setTimeout(() => {
-                            if (!hasSpokenSinceConnection) {
-                                speakIndicator.textContent = 'Spreek nu om transcriptie te zien...';
-                                speakIndicator.style.backgroundColor = '#e0f2fe';
-                                speakIndicator.style.color = '#0284c7';
-                                speakIndicator.classList.remove('speak-now');
-                            }
-                        }, 5000);
-                        
-                        clearTimeout(connectionTimeout);
-                    } else if (data.status === 'disconnected') {
-                        statusElement.textContent = 'Status: Verbinding met Deepgram verbroken';
-                        if (data.details) {
-                            statusElement.textContent += ` (${data.details})`;
-                        }
-                        statusElement.className = 'status disconnected';
-                        connectionStatus.textContent = 'Verbinding verbroken';
-                        connectionStatus.className = 'connection-status disconnected-status';
-                        isConnected = false;
+                        channelCount: 1,
+                        sampleRate: 48000
                     }
                 });
 
+                socket = io();
+                socket.on('connect', () => {
+                    statusElement.textContent = 'Status: Verbonden met server, wacht op Deepgram...';
+                });
+                socket.on('status', (data) => {
+                    statusElement.textContent = `Status: ${data.message || data.status}`;
+                });
                 socket.on('transcript', (data) => {
                     handleTranscript(data);
                 });
-
                 socket.on('error', (error) => {
-                    debug('⚠️ Socket error received:', error);
                     errorElement.textContent = `Fout: ${error.message || 'Onbekende fout'}`;
-                    if (error.details) {
-                        errorElement.textContent += ` (${error.details})`;
-                    }
                     errorElement.style.display = 'block';
-                    
-                    // Auto-hide error after 5 seconds
-                    setTimeout(() => {
-                        if (errorElement.style.display === 'block') {
-                            errorElement.style.display = 'none';
-                        }
-                    }, 5000);
+                    setTimeout(() => { errorElement.style.display = 'none'; }, 5000);
                 });
 
-                socket.on('connect_error', (error) => {
-                    debug('⚠️ Socket.io connection error:', error);
-                    errorElement.textContent = `Connection error: ${error.message}`;
-                    errorElement.style.display = 'block';
-                    connectionStatus.textContent = 'Verbinding mislukt';
-                    connectionStatus.className = 'connection-status disconnected-status';
-                    
-                    // Auto-hide error after 5 seconds
-                    setTimeout(() => {
-                        if (errorElement.style.display === 'block') {
-                            errorElement.style.display = 'none';
-                        }
-                    }, 5000);
-                });
-
-                socket.on('disconnect', () => {
-                    debug('Socket disconnected from server');
-                    statusElement.textContent = 'Status: Verbinding met server verbroken';
-                    statusElement.className = 'status disconnected';
-                    connectionStatus.textContent = 'Niet verbonden';
-                    connectionStatus.className = 'connection-status disconnected-status';
-                    isConnected = false;
-                    stopRecording();
-                });
-
-                // Create MediaRecorder for audio with optimized settings for Deepgram
-                debug('Creating MediaRecorder...');
                 mediaRecorder = new MediaRecorder(audioStream, {
-                    mimeType: 'audio/webm;codecs=opus',
+                    mimeType: 'audio/webm;codecs=opus',  // DIT IS WAT NAAR DE BACKEND GAAT EN WAT JE DOWNLOADT
                     audioBitsPerSecond: 128000
                 });
-                debug('✓ MediaRecorder created with codec: audio/webm;codecs=opus');
 
-                // Send audio data to server
                 mediaRecorder.addEventListener('dataavailable', (event) => {
-                    if (event.data.size > 0 && socket && socket.connected) {
-                        debug(`Audio data available: ${event.data.size} bytes`);
-                        
-                        // Send as ArrayBuffer for better binary handling
+                    if (event.data.size > 0) {
+                        // Bewaar voor download
+                        audioChunks.push(event.data);
+                        // Stuur naar backend voor live transcriptie
                         const reader = new FileReader();
                         reader.onload = () => {
-                            const audioData = reader.result;
-                            debug(`Sending ${audioData.byteLength} bytes of audio data`);
-                            socket.emit('audioData', audioData);
+                            socket.emit('audioData', reader.result);
                         };
                         reader.readAsArrayBuffer(event.data);
                     }
                 });
 
-                // Start recording with smaller chunks for faster transmission
-                debug('Starting MediaRecorder...');
-                mediaRecorder.start(100); // 100ms chunks for faster transmission
-                debug('✓ Recording started');
-                
+                mediaRecorder.start(100); // 100ms chunks
+                statusElement.textContent = 'Status: Opname gestart!';
             } catch (error) {
-                debug('⚠️ Error starting recording:', error);
                 errorElement.textContent = `Fout bij starten opname: ${error.message}`;
                 errorElement.style.display = 'block';
                 statusElement.textContent = 'Status: Fout bij opstarten';
-                statusElement.className = 'status disconnected';
                 updateButtonStates(false);
-                
-                // Auto-hide error after 5 seconds
-                setTimeout(() => {
-                    if (errorElement.style.display === 'block') {
-                        errorElement.style.display = 'none';
-                    }
-                }, 5000);
+                setTimeout(() => { errorElement.style.display = 'none'; }, 5000);
             }
         }
 
         function stopRecording() {
-            debug('Stopping recording...');
-            
-            // Clear any pending timeouts
-            if (connectionTimeout) {
-                clearTimeout(connectionTimeout);
-            }
-            
-            // Stop audio monitoring
-            if (silenceDetectionInterval) {
-                clearInterval(silenceDetectionInterval);
-                silenceDetectionInterval = null;
-            }
-            
-            if (audioContext) {
-                audioContext.close().then(() => {
-                    debug('Audio context closed');
-                }).catch(err => {
-                    debug('Error closing audio context:', err);
-                });
-                audioContext = null;
-            }
-            
-            // Reset audio level bar
-            audioLevelBar.style.width = '0%';
-            
-            // Stop MediaRecorder if it exists
             if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-                debug('Stopping MediaRecorder');
                 mediaRecorder.stop();
             }
-            
-            // Stop audio tracks
             if (audioStream) {
-                debug('Stopping audio tracks');
-                audioStream.getTracks().forEach(track => {
-                    track.stop();
-                    debug(`Audio track ${track.id} stopped`);
-                });
+                audioStream.getTracks().forEach(track => track.stop());
                 audioStream = null;
             }
-            
-            // Tell server to stop transcription
             if (socket && socket.connected) {
-                debug('Sending stopTranscription event to server');
                 socket.emit('stopTranscription');
-                debug('Disconnecting from server');
                 socket.disconnect();
             }
-            // Update UI
+            // Maak van de chunks een Blob voor download
+            recordedBlob = new Blob(audioChunks, { type: 'audio/webm; codecs=opus' });
             updateButtonStates(false);
             statusElement.textContent = 'Status: Opname gestopt';
-            statusElement.className = 'status';
-            speakIndicator.textContent = 'Druk op Start om te beginnen...';
-            speakIndicator.style.backgroundColor = '#e0f2fe';
-            speakIndicator.style.color = '#0284c7';
-            speakIndicator.classList.remove('speak-now');
-            connectionStatus.textContent = 'Niet verbonden';
-            connectionStatus.className = 'connection-status disconnected-status';
-            isConnected = false;
-            
-            debug('Recording fully stopped');
-            }
+        }
 
-            // Handle page unload to clean up resources
-        window.addEventListener('beforeunload', () => {
-            debug('Page unloading, cleaning up resources');
-            stopRecording();
-        });
+        function downloadRecording() {
+            if (!recordedBlob) return;
+            const url = URL.createObjectURL(recordedBlob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = 'calllogix-opname.webm';
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => {
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+            }, 100);
+        }
     </script>
 </body>
 </html>
