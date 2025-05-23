@@ -45,14 +45,14 @@ io.on('connection', (socket) => {
 
   try {
     // Create a live transcription connection with v4 syntax
-    // NOTE: We're simplifying the parameters to fix the 400 error
     console.log('🔄 Attempting to create Deepgram connection...');
     dgConnection = deepgram.listen.live({
       model: 'nova-2',
       language: 'nl',
       smart_format: true,
-      interim_results: true
-      // Removed potentially problematic parameters
+      interim_results: true,
+      endpointing: true,  // Enable endpointing to better detect speech segments
+      punctuate: true     // Ensure punctuation is applied
     });
     console.log('✅ Deepgram connection object created');
     
@@ -60,6 +60,16 @@ io.on('connection', (socket) => {
     dgConnection.on(LiveTranscriptionEvents.Open, () => {
       console.log('🎙️ Deepgram connection SUCCESSFULLY opened');
       socket.emit('status', { status: 'connected', message: 'Deepgram verbinding actief' });
+      
+      // Send initial audio data to prevent timeout
+      try {
+        // Create a small silent audio buffer (8 bytes of zeros)
+        const silentBuffer = Buffer.from(new Uint8Array(8));
+        dgConnection.send(silentBuffer);
+        console.log('📣 Sent initial silent audio data to Deepgram');
+      } catch (err) {
+        console.error('❌ Error sending initial audio data:', err);
+      }
       
       // Set up KeepAlive to prevent timeouts
       keepAliveInterval = setInterval(() => {
@@ -76,10 +86,20 @@ io.on('connection', (socket) => {
 
     // Handle transcription results from Deepgram
     dgConnection.on(LiveTranscriptionEvents.Transcript, (transcript) => {
-      console.log('📝 Received transcript from Deepgram');
+      console.log('📝 Received transcript from Deepgram:', JSON.stringify(transcript).substring(0, 200) + (transcript.length > 200 ? '...' : ''));
       
       // Forward the transcript data to the client
       socket.emit('transcript', transcript);
+    });
+
+    // Handle Deepgram metadata events
+    dgConnection.on(LiveTranscriptionEvents.Metadata, (metadata) => {
+      console.log('📋 Received metadata from Deepgram:', metadata);
+    });
+
+    // Handle Deepgram utterance end events
+    dgConnection.on(LiveTranscriptionEvents.UtteranceEnd, (utterance) => {
+      console.log('🔚 Utterance end event received:', utterance);
     });
 
     // Handle Deepgram errors with more detailed logging
@@ -100,7 +120,23 @@ io.on('connection', (socket) => {
     // Handle Deepgram connection close
     dgConnection.on(LiveTranscriptionEvents.Close, (closeEvent) => {
       console.log('🔴 Deepgram verbinding gesloten', closeEvent);
-      socket.emit('status', { status: 'disconnected', message: 'Deepgram verbinding gesloten' });
+      
+      // Try to extract close message if available
+      let closeMessage = '';
+      if (closeEvent && closeEvent._closeMessage) {
+        try {
+          closeMessage = closeEvent._closeMessage.toString('utf8');
+          console.log('Close message:', closeMessage);
+        } catch (err) {
+          console.error('Error decoding close message:', err);
+        }
+      }
+      
+      socket.emit('status', { 
+        status: 'disconnected', 
+        message: 'Deepgram verbinding gesloten',
+        details: closeMessage
+      });
       
       if (keepAliveInterval) {
         clearInterval(keepAliveInterval);
@@ -110,14 +146,18 @@ io.on('connection', (socket) => {
 
     // Handle audio data from client - special handling for binary data
     socket.on('audioData', (data) => {
+      console.log(`📣 Received audio data from client: ${data.byteLength || data.length || 'unknown'} bytes`);
+      
       if (dgConnection && dgConnection.getReadyState() === 1) { // 1 = OPEN
         try {
-          // Send the audio data directly without modification
+          console.log('✅ Sending audio data to Deepgram');
           dgConnection.send(data);
         } catch (err) {
           console.error('❌ Error sending audio to Deepgram:', err);
           socket.emit('error', { message: 'Fout bij verzenden audio', details: err.message });
         }
+      } else {
+        console.warn(`⚠️ Cannot send audio: Deepgram connection not open (state: ${dgConnection ? dgConnection.getReadyState() : 'null'})`);
       }
     });
 

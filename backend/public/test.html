@@ -58,6 +58,17 @@
             border-radius: 5px;
             text-align: center;
         }
+        .speak-now {
+            background-color: #fef3c7;
+            color: #92400e;
+            font-weight: bold;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
         .transcript {
             margin-top: 20px;
             padding: 15px;
@@ -97,6 +108,19 @@
             gap: 10px;
             flex-wrap: wrap;
         }
+        .audio-level {
+            height: 20px;
+            margin: 10px 0;
+            background-color: #dbeafe;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .audio-level-bar {
+            height: 100%;
+            width: 0%;
+            background-color: #3b82f6;
+            transition: width 0.1s ease;
+        }
     </style>
     <script>
         // Monitor and log all errors in the console
@@ -116,6 +140,9 @@
     
     <div class="status" id="status">Status: Niet verbonden</div>
     <div class="speak-indicator" id="speakIndicator">Druk op Start om te beginnen...</div>
+    <div class="audio-level">
+        <div class="audio-level-bar" id="audioLevelBar"></div>
+    </div>
     <div class="error" id="error" style="display: none;"></div>
     
     <div class="transcript">
@@ -134,6 +161,7 @@
         let audioContext;
         let silenceDetectionInterval;
         let lastAudioLevel = 0;
+        let hasSpokenSinceConnection = false;
 
         // DOM elements
         const startButton = document.getElementById('startButton');
@@ -141,6 +169,7 @@
         const testButton = document.getElementById('testButton');
         const statusElement = document.getElementById('status');
         const speakIndicator = document.getElementById('speakIndicator');
+        const audioLevelBar = document.getElementById('audioLevelBar');
         const errorElement = document.getElementById('error');
         const finalTranscriptElement = document.getElementById('finalTranscript');
         const interimTranscriptElement = document.getElementById('interimTranscript');
@@ -194,6 +223,40 @@
             }
         }
 
+        // Function to handle transcript data
+        function handleTranscript(data) {
+            debug('Processing transcript data', data);
+            
+            if (data && data.channel && data.channel.alternatives && data.channel.alternatives.length > 0) {
+                const transcript = data.channel.alternatives[0].transcript || '';
+                
+                if (transcript) {
+                    debug(`Transcript: "${transcript}", is_final: ${data.is_final}`);
+                    hasSpokenSinceConnection = true;
+                    
+                    // Update UI to show we detected speech
+                    speakIndicator.textContent = '🎤 Spraak gedetecteerd!';
+                    speakIndicator.style.backgroundColor = '#dcfce7';
+                    speakIndicator.style.color = '#166534';
+                    speakIndicator.classList.remove('speak-now');
+                    
+                    if (data.is_final) {
+                        // Final transcript
+                        finalTranscriptText += ' ' + transcript;
+                        finalTranscriptElement.textContent = finalTranscriptText.trim();
+                        interimTranscriptElement.textContent = '';
+                    } else {
+                        // Interim transcript
+                        interimTranscriptElement.textContent = transcript;
+                    }
+                } else {
+                    debug('Transcript received but text was empty');
+                }
+            } else {
+                debug('Transcript received but in unexpected format', data);
+            }
+        }
+
         // Function to monitor audio levels
         function startAudioLevelMonitoring(stream) {
             try {
@@ -217,15 +280,17 @@
                     const average = sum / bufferLength;
                     lastAudioLevel = average;
                     
+                    // Update audio level visualization
+                    const levelPercentage = Math.min(100, average * 2); // Scale for better visual feedback
+                    audioLevelBar.style.width = `${levelPercentage}%`;
+                    
                     // Update speak indicator based on audio level
-                    if (average > 20) {
-                        speakIndicator.textContent = '🎤 Spraak gedetecteerd...';
-                        speakIndicator.style.backgroundColor = '#dcfce7';
-                        speakIndicator.style.color = '#166534';
-                    } else {
-                        speakIndicator.textContent = 'Spreek nu om transcriptie te zien...';
-                        speakIndicator.style.backgroundColor = '#e0f2fe';
-                        speakIndicator.style.color = '#0284c7';
+                    if (!hasSpokenSinceConnection) {
+                        if (average > 20) {
+                            speakIndicator.textContent = '🎤 Spraak gedetecteerd...';
+                            speakIndicator.style.backgroundColor = '#dcfce7';
+                            speakIndicator.style.color = '#166534';
+                        }
                     }
                     
                 }, 100);
@@ -242,6 +307,7 @@
                 interimTranscriptElement.textContent = '';
                 errorElement.style.display = 'none';
                 debugBox.innerHTML = ''; // Clear debug box
+                hasSpokenSinceConnection = false;
                 
                 // Update button states
                 startButton.disabled = true;
@@ -250,13 +316,15 @@
                 statusElement.className = 'status';
                 speakIndicator.textContent = 'Microfoon wordt geactiveerd...';
 
-                // Get microphone access with better constraints
+                // Get microphone access with optimal settings for Deepgram
                 debug('Requesting microphone access...');
                 audioStream = await navigator.mediaDevices.getUserMedia({ 
                     audio: {
-                        echoCancellation: false,
-                        noiseSuppression: false,
-                        autoGainControl: false
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true,
+                        channelCount: 1,         // Ensure mono audio
+                        sampleRate: 48000        // Optimal sample rate
                     } 
                 });
                 debug('✓ Microphone access granted');
@@ -293,42 +361,35 @@
                     if (data.status === 'connected') {
                         statusElement.textContent = 'Status: Deepgram actief - Transcriptie gestart!';
                         statusElement.className = 'status connected';
-                        speakIndicator.textContent = 'Spreek nu om transcriptie te zien...';
+                        
+                        // Encourage the user to speak immediately
+                        speakIndicator.textContent = '🗣️ SPREEK NU! Begin direct met praten...';
+                        speakIndicator.style.backgroundColor = '#fef3c7';
+                        speakIndicator.style.color = '#92400e';
+                        speakIndicator.classList.add('speak-now');
+                        
+                        // After a few seconds, revert to normal prompt if no speech detected
+                        setTimeout(() => {
+                            if (!hasSpokenSinceConnection) {
+                                speakIndicator.textContent = 'Spreek nu om transcriptie te zien...';
+                                speakIndicator.style.backgroundColor = '#e0f2fe';
+                                speakIndicator.style.color = '#0284c7';
+                                speakIndicator.classList.remove('speak-now');
+                            }
+                        }, 5000);
+                        
                         clearTimeout(connectionTimeout);
                     } else if (data.status === 'disconnected') {
                         statusElement.textContent = 'Status: Verbinding met Deepgram verbroken';
+                        if (data.details) {
+                            statusElement.textContent += ` (${data.details})`;
+                        }
                         statusElement.className = 'status disconnected';
                     }
                 });
 
                 socket.on('transcript', (data) => {
-                    debug('Received transcript data');
-                    
-                    // Log the full data structure to better understand what we're receiving
-                    console.log('Full transcript data:', data);
-                    
-                    // Handle transcription data
-                    if (data && data.channel && data.channel.alternatives && data.channel.alternatives.length > 0) {
-                        const transcript = data.channel.alternatives[0].transcript || '';
-                        
-                        if (transcript) {
-                            debug(`Transcript: "${transcript}", is_final: ${data.is_final}`);
-                            
-                            if (data.is_final) {
-                                // Final transcript
-                                finalTranscriptText += ' ' + transcript;
-                                finalTranscriptElement.textContent = finalTranscriptText.trim();
-                                interimTranscriptElement.textContent = '';
-                            } else {
-                                // Interim transcript
-                                interimTranscriptElement.textContent = transcript;
-                            }
-                        } else {
-                            debug('Transcript received but text was empty');
-                        }
-                    } else {
-                        debug('Transcript received but in unexpected format', data);
-                    }
+                    handleTranscript(data);
                 });
 
                 socket.on('error', (error) => {
@@ -353,7 +414,7 @@
                     stopRecording();
                 });
 
-                // Create MediaRecorder for audio with better options
+                // Create MediaRecorder for audio with optimized settings for Deepgram
                 debug('Creating MediaRecorder...');
                 mediaRecorder = new MediaRecorder(audioStream, {
                     mimeType: 'audio/webm;codecs=opus',
@@ -369,16 +430,17 @@
                         // Send as ArrayBuffer for better binary handling
                         const reader = new FileReader();
                         reader.onload = () => {
-                            debug('Audio data converted to ArrayBuffer, sending to server...');
-                            socket.emit('audioData', reader.result);
+                            const audioData = reader.result;
+                            debug(`Sending ${audioData.byteLength} bytes of audio data`);
+                            socket.emit('audioData', audioData);
                         };
                         reader.readAsArrayBuffer(event.data);
                     }
                 });
 
-                // Start recording
+                // Start recording with smaller chunks for faster transmission
                 debug('Starting MediaRecorder...');
-                mediaRecorder.start(250); // Capture audio in 250ms chunks
+                mediaRecorder.start(100); // 100ms chunks for faster transmission
                 debug('✓ Recording started');
                 
             } catch (error) {
@@ -415,6 +477,9 @@
                 audioContext = null;
             }
             
+            // Reset audio level bar
+            audioLevelBar.style.width = '0%';
+            
             // Stop MediaRecorder if it exists
             if (mediaRecorder && mediaRecorder.state !== 'inactive') {
                 debug('Stopping MediaRecorder');
@@ -447,6 +512,7 @@
             speakIndicator.textContent = 'Druk op Start om te beginnen...';
             speakIndicator.style.backgroundColor = '#e0f2fe';
             speakIndicator.style.color = '#0284c7';
+            speakIndicator.classList.remove('speak-now');
             
             debug('Recording fully stopped');
         }
