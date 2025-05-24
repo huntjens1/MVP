@@ -13,6 +13,12 @@ app.use(express.static('public'));
 app.use(cors());
 app.use(express.json());
 
+// === Health endpoint toegevoegd ===
+app.get('/api/health', (req, res) => {
+  res.json({ status: "ok" });
+});
+// ================================
+
 app.post('/api/deepgram-token', async (req, res) => {
   try {
     const response = await fetch(
