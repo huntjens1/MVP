@@ -2,7 +2,7 @@
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
-    <title>Deepgram Direct Live Transcriptie Demo</title>
+    <title>Deepgram Bearer Token Test (nova-2/nl/16000)</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; }
         button { padding: 8px 16px; margin-right: 10px; }
@@ -12,7 +12,7 @@
     </style>
 </head>
 <body>
-    <h2>Deepgram Direct Live Transcriptie</h2>
+    <h2>Deepgram Bearer Token (productie-proof, model=nova-2, nl)</h2>
     <button id="startBtn">Start opname</button>
     <button id="stopBtn" disabled>Stop opname</button>
     <div>
@@ -23,7 +23,6 @@
     </div>
     <script>
         let mediaRecorder, ws, audioStream;
-        let isRecording = false;
 
         function log(msg) {
             document.getElementById('log').textContent += msg + '\n';
@@ -44,21 +43,17 @@
             document.getElementById('final').textContent = '';
             document.getElementById('interim').textContent = '';
             document.getElementById('log').textContent = '';
-            isRecording = true;
             log('Opname starten...');
             try {
                 audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 mediaRecorder = new MediaRecorder(audioStream, { mimeType: 'audio/webm;codecs=opus' });
 
-                // Ophalen token van backend
+                let deepgramWsUrl = 'wss://api.deepgram.com/v1/listen?model=nova-2&language=nl&sample_rate=16000&interim_results=true&punctuate=true';
+
                 log('Token opvragen...');
                 const dgToken = await getDeepgramToken();
-                log('Token ontvangen: ' + dgToken.substring(0,8) + '...');
+                log('Gebruik token: ' + dgToken.substring(0,12) + '...');
 
-                let deepgramWsUrl = 'wss://api.deepgram.com/v1/listen?language=nl&punctuate=true&interim_results=true&encoding=opus&sample_rate=48000';
-
-                // BELANGRIJK: subprotocol is nu 'bearer'
-                log('Openen Deepgram WS met browser-token (bearer)');
                 ws = new WebSocket(deepgramWsUrl, ['bearer', dgToken]);
 
                 ws.onopen = () => {
@@ -70,7 +65,6 @@
                 ws.onclose = (e) => {
                     log('Deepgram WS gesloten: ' + e.code + ' / ' + (e.reason || ''));
                     document.getElementById('status').textContent = 'Verbinding met Deepgram gesloten.';
-                    isRecording = false;
                     document.getElementById('startBtn').disabled = false;
                     document.getElementById('stopBtn').disabled = true;
                 };
@@ -83,34 +77,24 @@
                     log('[DG WS] IN: ' + event.data);
                     let json;
                     try { json = JSON.parse(event.data); } catch { return; }
+                    if (json.error) {
+                        log('Deepgram error: ' + json.error);
+                        return;
+                    }
                     if (!json.channel) return;
-                    if (json.channel.alternatives[0].transcript) {
+                    if (json.channel.alternatives && json.channel.alternatives[0].transcript !== undefined) {
                         let text = json.channel.alternatives[0].transcript;
                         if (json.is_final) {
                             document.getElementById('final').textContent += ' ' + text;
                             document.getElementById('interim').textContent = '';
-                            fetch('/api/live-transcript', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                    userId: 'testuser',
-                                    tenantId: 'tenant1',
-                                    transcript: text,
-                                    isFinal: true,
-                                    ts: Date.now(),
-                                })
-                            })
-                            .then(r => r.json())
-                            .then(resp => log('[Backend] Response: ' + JSON.stringify(resp)))
-                            .catch(e => log('Backend POST error: ' + e));
-                        } else {
+                        } else if (text) {
                             document.getElementById('interim').textContent = text;
                         }
                     }
                 };
 
                 mediaRecorder.ondataavailable = function(e) {
-                    log("Audio chunk size:", e.data.size, "bytes");
+                    log("Audio chunk size: " + e.data.size + " bytes");
                     if (ws.readyState === 1 && e.data.size > 0) {
                         e.data.arrayBuffer().then(buf => {
                             ws.send(buf);
@@ -126,7 +110,6 @@
         };
 
         document.getElementById('stopBtn').onclick = function() {
-            isRecording = false;
             document.getElementById('startBtn').disabled = false;
             document.getElementById('stopBtn').disabled = true;
             if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
