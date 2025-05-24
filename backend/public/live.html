@@ -24,12 +24,18 @@
     <script>
         let mediaRecorder, ws, audioStream;
         let isRecording = false;
-        let DG_API_KEY = 'b0474b3fa55344c24b86c43633496470aec053c1'; // <<<<---- VUL HIER JOUW KEY IN
 
         function log(msg) {
             document.getElementById('log').textContent += msg + '\n';
             document.getElementById('log').scrollTop = 9999;
             console.log(msg);
+        }
+
+        async function getDeepgramToken() {
+            const response = await fetch('/api/deepgram-token', { method: 'POST' });
+            if (!response.ok) throw new Error("Kon geen Deepgram token ophalen");
+            const data = await response.json();
+            return data.token;
         }
 
         document.getElementById('startBtn').onclick = async function() {
@@ -44,22 +50,25 @@
                 audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 mediaRecorder = new MediaRecorder(audioStream, { mimeType: 'audio/webm;codecs=opus' });
 
-                // === Stap 1: Verbind direct naar Deepgram WS ===
-                let deepgramWsUrl = `wss://api.deepgram.com/v1/listen?language=nl&punctuate=true&interim_results=true&encoding=opus&sample_rate=48000`;
-                ws = new WebSocket(deepgramWsUrl, [], {
-                    headers: { 'Authorization': 'Token ' + DG_API_KEY }
-                });
-                // workaround voor browser: voeg header toe in URL
-                ws = new WebSocket(deepgramWsUrl, ['token', DG_API_KEY]);
+                // Ophalen token van backend
+                log('Token opvragen...');
+                const dgToken = await getDeepgramToken();
+                log('Token ontvangen: ' + dgToken.substring(0,8) + '...');
+
+                let deepgramWsUrl = 'wss://api.deepgram.com/v1/listen?language=nl&punctuate=true&interim_results=true&encoding=opus&sample_rate=48000';
+
+                // BELANGRIJK: subprotocol is nu 'bearer'
+                log('Openen Deepgram WS met browser-token (bearer)');
+                ws = new WebSocket(deepgramWsUrl, ['bearer', dgToken]);
 
                 ws.onopen = () => {
                     log('✅ Verbonden met Deepgram WebSocket');
                     document.getElementById('status').textContent = 'Live transcriptie gestart!';
-                    mediaRecorder.start(250); // 250ms chunks: meer latency = betrouwbaarder
+                    mediaRecorder.start(250);
                 };
 
                 ws.onclose = (e) => {
-                    log('Deepgram WS gesloten: ' + e.code + ' / ' + e.reason);
+                    log('Deepgram WS gesloten: ' + e.code + ' / ' + (e.reason || ''));
                     document.getElementById('status').textContent = 'Verbinding met Deepgram gesloten.';
                     isRecording = false;
                     document.getElementById('startBtn').disabled = false;
@@ -70,8 +79,8 @@
                     log('WS error: ' + JSON.stringify(err));
                 };
 
-                // Ontvang live transcriptie
                 ws.onmessage = function(event) {
+                    log('[DG WS] IN: ' + event.data);
                     let json;
                     try { json = JSON.parse(event.data); } catch { return; }
                     if (!json.channel) return;
@@ -80,28 +89,33 @@
                         if (json.is_final) {
                             document.getElementById('final').textContent += ' ' + text;
                             document.getElementById('interim').textContent = '';
-                            // === STAP 2: Stuur transcriptie door naar eigen backend ===
-                            fetch('/api/live-transcript', { // endpoint op je eigen backend!
+                            fetch('/api/live-transcript', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
-                                    userId: 'testuser',        // Hier kun je user/tenant info meesturen
+                                    userId: 'testuser',
                                     tenantId: 'tenant1',
                                     transcript: text,
                                     isFinal: true,
                                     ts: Date.now(),
                                 })
-                            }).catch(e => log('Backend POST error: ' + e));
+                            })
+                            .then(r => r.json())
+                            .then(resp => log('[Backend] Response: ' + JSON.stringify(resp)))
+                            .catch(e => log('Backend POST error: ' + e));
                         } else {
                             document.getElementById('interim').textContent = text;
                         }
                     }
                 };
 
-                // Stuur audio naar Deepgram
                 mediaRecorder.ondataavailable = function(e) {
+                    log("Audio chunk size:", e.data.size, "bytes");
                     if (ws.readyState === 1 && e.data.size > 0) {
-                        e.data.arrayBuffer().then(buf => ws.send(buf));
+                        e.data.arrayBuffer().then(buf => {
+                            ws.send(buf);
+                            log("Audio chunk verzonden naar Deepgram (" + buf.byteLength + " bytes)");
+                        });
                     }
                 };
             } catch (err) {
