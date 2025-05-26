@@ -1,13 +1,8 @@
-import BackendHealth from "./components/BackendHealth";
-import LiveTranscribe from "./components/LiveTranscribe";
+import CallLogixTranscriptie from "./components/CallLogixTranscriptie";
 
 function App() {
   return (
-    <div style={{ padding: 32 }}>
-      <h1>CallLogix MVP</h1>
-      <BackendHealth />
-      <LiveTranscribe />
-    </div>
+    <CallLogixTranscriptie />
   );
 }
 
