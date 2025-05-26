@@ -41,8 +41,8 @@ export default function ResetPassword() {
   useEffect(() => {
     if (access_token) {
       supabase.auth.setSession({
-        access_token,
-        refresh_token,
+        access_token: access_token || "",
+        refresh_token: refresh_token || "",
       });
     }
   }, [access_token, refresh_token]);
