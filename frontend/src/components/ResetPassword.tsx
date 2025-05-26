@@ -37,6 +37,11 @@ export default function ResetPassword() {
     }
   }
 
+  // Laat ALTIJD het formulier zien zolang access_token er is
+  if (!access_token) {
+    return <div>Geen geldige invite/token gevonden.</div>;
+  }
+
   return (
     <div className="flex items-center justify-center min-h-screen bg-zinc-950">
       <form className="bg-zinc-900 p-8 rounded-xl shadow-xl flex flex-col gap-4 w-full max-w-md" onSubmit={handleSetPassword}>
