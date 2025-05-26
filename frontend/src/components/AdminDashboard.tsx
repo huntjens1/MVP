@@ -44,19 +44,6 @@ export default function AdminDashboard() {
     }
   }
 
-  // Superadmin kan direct user-row toevoegen (bypasst invite flow)
-  async function handleCreateUserDirect(e: React.FormEvent) {
-    e.preventDefault();
-    await supabase.from("users").insert({
-      id: crypto.randomUUID(), // of laat leeg voor auto-gen
-      email: newUser.email,
-      role: newUser.role,
-      tenant_id: newUser.tenant_id,
-    });
-    setNewUser({ email: "", role: "support", tenant_id: "" });
-    setRefresh(x => x + 1);
-  }
-
   async function handleCreateTenant(e: React.FormEvent) {
     e.preventDefault();
     await supabase.from("tenants").insert({

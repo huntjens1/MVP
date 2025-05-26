@@ -42,7 +42,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
-    const session = supabase.auth.getSession().then(({ data: { session } }) => {
+    // "session" wordt niet als variable gedeclareerd
+    supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
         fetchUserDetails(session.user.id).then((details) => {
           setUser(details);
