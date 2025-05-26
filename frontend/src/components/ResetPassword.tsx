@@ -2,6 +2,16 @@ import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
 import { useSearchParams, useNavigate } from "react-router-dom";
 
+function getHashParams() {
+  const hash = window.location.hash.substr(1);
+  const params = new URLSearchParams(hash);
+  return {
+    access_token: params.get("access_token"),
+    refresh_token: params.get("refresh_token"),
+    type: params.get("type"),
+  };
+}
+
 export default function ResetPassword() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -10,16 +20,32 @@ export default function ResetPassword() {
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  const access_token = searchParams.get("access_token") || searchParams.get("token");
+  // Hash redirect: als iemand landt op "/" met een hash (invite/reset), stuur naar /reset-password
+  useEffect(() => {
+    if (window.location.pathname === "/" && window.location.hash) {
+      const hash = window.location.hash.substr(1);
+      navigate(`/reset-password?${hash}`, { replace: true });
+    }
+  }, [navigate]);
+
+  const hashParams = getHashParams();
+  const access_token =
+    searchParams.get("access_token") ||
+    searchParams.get("token") ||
+    hashParams.access_token;
+  const refresh_token =
+    searchParams.get("refresh_token") ||
+    hashParams.refresh_token ||
+    access_token;
 
   useEffect(() => {
     if (access_token) {
       supabase.auth.setSession({
         access_token,
-        refresh_token: access_token,
+        refresh_token,
       });
     }
-  }, [access_token]);
+  }, [access_token, refresh_token]);
 
   async function handleSetPassword(e: React.FormEvent) {
     e.preventDefault();
@@ -37,7 +63,6 @@ export default function ResetPassword() {
     }
   }
 
-  // Laat ALTIJD het formulier zien zolang access_token er is
   if (!access_token) {
     return <div>Geen geldige invite/token gevonden.</div>;
   }
