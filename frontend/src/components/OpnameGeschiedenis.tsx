@@ -1,13 +1,10 @@
 export default function OpnameGeschiedenis() {
   return (
-    <>
-      <header className="mb-8 flex items-center justify-between">
-        <h1 className="text-2xl font-black text-calllogix-primary">Opname geschiedenis</h1>
-      </header>
-      <div className="bg-calllogix-card text-calllogix-text rounded-2xl p-8 shadow-lg">
-        <h2 className="text-lg font-bold mb-4">Eerdere opnames</h2>
-        <div className="text-calllogix-subtext">(Nog geen data gekoppeld)</div>
+    <section>
+      <h2 className="text-3xl font-black text-calllogix-primary mb-6">Opname Geschiedenis</h2>
+      <div className="bg-calllogix-card rounded-2xl p-8 shadow-xl text-calllogix-text">
+        <p>Nog geen opnames...</p>
       </div>
-    </>
+    </section>
   );
 }

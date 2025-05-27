@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { LayoutDashboard, Mic, History, Users } from "lucide-react";
 import CallLogixTranscriptie from "./CallLogixTranscriptie";
+import TopBar from "./TopBar";
 
 const TABS = [
   { name: "Dashboard", icon: LayoutDashboard },
@@ -13,7 +14,8 @@ export default function AdminDashboard() {
   const [tab, setTab] = useState("Dashboard");
 
   return (
-    <div className="flex min-h-screen bg-zinc-50 dark:bg-zinc-900">
+    <div className="flex min-h-screen bg-zinc-50 dark:bg-zinc-900 relative">
+      <TopBar />
       {/* Sidebar */}
       <aside className="w-64 bg-blue-900 text-white flex flex-col py-8 px-4 shadow-lg">
         <div className="text-2xl font-black tracking-wide mb-8 flex items-center gap-3">
@@ -42,12 +44,11 @@ export default function AdminDashboard() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 p-10 bg-zinc-50 dark:bg-zinc-900">
+      <main className="flex-1 p-10 bg-zinc-50 dark:bg-zinc-900 pt-24">
         <header className="mb-8 flex items-center justify-between">
           <h1 className="text-2xl font-bold text-blue-900 dark:text-blue-100">
             {tab}
           </h1>
-          {/* <input className="rounded px-4 py-2 bg-zinc-200 text-zinc-700" placeholder="Zoek..." /> */}
         </header>
 
         {/* Content switch */}
