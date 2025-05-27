@@ -1,19 +1,22 @@
-import AuthPanel from "./components/AuthPanel";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import DashboardLayoutRouter from "./components/DashboardLayoutRouter";
+import DashboardHome from "./components/DashboardHome";
 import CallLogixTranscriptie from "./components/CallLogixTranscriptie";
-import AdminDashboard from "./components/AdminDashboard";
-import { useAuth } from "./AuthContext";
+import OpnameGeschiedenis from "./components/OpnameGeschiedenis";
+import ResetPassword from "./components/ResetPassword";
 
 export default function App() {
-  const { user } = useAuth();
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-zinc-900 via-zinc-950 to-cyan-950 px-2 py-8">
-      <div className="max-w-3xl mx-auto">
-        <AuthPanel />
-        {user?.role === "superadmin" && <AdminDashboard />}
-        {user && user.role !== "superadmin" && <CallLogixTranscriptie />}
-        {!user && <div className="text-zinc-400 mt-12 text-center text-lg">Log in om CallLogix te gebruiken.</div>}
-      </div>
-    </div>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/app" element={<DashboardLayoutRouter />}>
+          <Route index element={<DashboardHome />} />
+          <Route path="transcriptie" element={<CallLogixTranscriptie />} />
+          <Route path="geschiedenis" element={<OpnameGeschiedenis />} />
+        </Route>
+        {/* Auth/wachtwoord reset buiten layout */}
+        <Route path="/reset-password" element={<ResetPassword />} />
+      </Routes>
+    </BrowserRouter>
   );
 }

@@ -1,107 +1,95 @@
-import { useEffect, useState } from "react";
-import { supabase } from "../supabaseClient";
-import { useAuth } from "../AuthContext";
+import { useState } from "react";
+import { LayoutDashboard, Mic, History, Users } from "lucide-react";
+import CallLogixTranscriptie from "./CallLogixTranscriptie";
 
-type Tenant = { id: string; name: string; domain: string; };
-type User = { id: string; email: string; role: string; tenant_id: string; };
-
-const ROLES = ["support", "coordinator", "manager", "superadmin"];
+const TABS = [
+  { name: "Dashboard", icon: LayoutDashboard },
+  { name: "Nieuwe opname", icon: Mic },
+  { name: "Opname geschiedenis", icon: History },
+  // { name: "Gebruikersbeheer", icon: Users }, // optioneel
+];
 
 export default function AdminDashboard() {
-  const { user } = useAuth();
-  const [tenants, setTenants] = useState<Tenant[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
-  const [newTenant, setNewTenant] = useState({ name: "", domain: "" });
-  const [newUser, setNewUser] = useState({ email: "", role: "support", tenant_id: "" });
-  const [refresh, setRefresh] = useState(0);
-
-  // Alleen superadmin mag deze UI zien!
-  if (!user || user.role !== "superadmin") return null;
-
-  useEffect(() => {
-    supabase.from("tenants").select("id, name, domain").then(({ data }) => setTenants(data || []));
-    supabase.from("users").select("id, email, role, tenant_id").then(({ data }) => setUsers(data || []));
-  }, [refresh]);
-
-  // User invite: via backend endpoint!
-  async function handleInviteUser(e: React.FormEvent) {
-    e.preventDefault();
-
-    const res = await fetch(`${import.meta.env.VITE_API_BASE}/api/invite-user`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: newUser.email,
-        role: newUser.role,
-        tenant_id: newUser.tenant_id,
-      }),
-    });
-
-    if (res.ok) {
-      setNewUser({ email: "", role: "support", tenant_id: "" });
-      setRefresh(x => x + 1);
-      alert("Gebruiker uitgenodigd! (Mail sturen komt in de volgende stap)");
-    } else {
-      const data = await res.json();
-      alert(data.error || "Fout bij uitnodigen gebruiker");
-    }
-  }
-
-  async function handleCreateTenant(e: React.FormEvent) {
-    e.preventDefault();
-    await supabase.from("tenants").insert({
-      name: newTenant.name,
-      domain: newTenant.domain,
-    });
-    setNewTenant({ name: "", domain: "" });
-    setRefresh(x => x + 1);
-  }
+  const [tab, setTab] = useState("Dashboard");
 
   return (
-    <div className="bg-zinc-900 p-8 rounded-2xl max-w-4xl mx-auto shadow-xl">
-      <h2 className="text-2xl font-bold mb-6 text-cyan-300">Admin dashboard (superadmin-only)</h2>
-      <div className="flex gap-8">
-        {/* Tenant beheer */}
-        <form className="flex-1 flex flex-col gap-2" onSubmit={handleCreateTenant}>
-          <h3 className="font-semibold text-lg text-cyan-200 mb-2">Tenant aanmaken</h3>
-          <input className="bg-zinc-800 p-2 rounded" required placeholder="Tenant naam" value={newTenant.name} onChange={e => setNewTenant(v => ({ ...v, name: e.target.value }))} />
-          <input className="bg-zinc-800 p-2 rounded" required placeholder="Domein (bv provide.nl)" value={newTenant.domain} onChange={e => setNewTenant(v => ({ ...v, domain: e.target.value }))} />
-          <button className="bg-cyan-600 hover:bg-cyan-700 text-white rounded p-2 font-bold mt-2">Tenant opslaan</button>
-        </form>
-        {/* User beheer */}
-        <form className="flex-1 flex flex-col gap-2" onSubmit={handleInviteUser}>
-          <h3 className="font-semibold text-lg text-cyan-200 mb-2">Gebruiker uitnodigen</h3>
-          <input className="bg-zinc-800 p-2 rounded" required placeholder="Email" value={newUser.email} onChange={e => setNewUser(v => ({ ...v, email: e.target.value }))} />
-          <select className="bg-zinc-800 p-2 rounded" value={newUser.role} onChange={e => setNewUser(v => ({ ...v, role: e.target.value }))}>
-            {ROLES.map(role => <option key={role} value={role}>{role}</option>)}
-          </select>
-          <select className="bg-zinc-800 p-2 rounded" required value={newUser.tenant_id} onChange={e => setNewUser(v => ({ ...v, tenant_id: e.target.value }))}>
-            <option value="">Kies tenant</option>
-            {tenants.map(t => <option key={t.id} value={t.id}>{t.name} ({t.domain})</option>)}
-          </select>
-          <button className="bg-cyan-600 hover:bg-cyan-700 text-white rounded p-2 font-bold mt-2">Gebruiker uitnodigen</button>
-        </form>
-      </div>
-      {/* Users overzicht */}
-      <div className="mt-8">
-        <h3 className="text-lg font-semibold mb-2 text-cyan-200">Gebruikersoverzicht</h3>
-        <table className="w-full text-sm">
-          <thead>
-            <tr>
-              <th>Email</th><th>Rol</th><th>Tenant</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map(u => (
-              <tr key={u.id}>
-                <td>{u.email}</td>
-                <td>{u.role}</td>
-                <td>{tenants.find(t => t.id === u.tenant_id)?.name || "-"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+    <div className="flex min-h-screen bg-zinc-50 dark:bg-zinc-900">
+      {/* Sidebar */}
+      <aside className="w-64 bg-blue-900 text-white flex flex-col py-8 px-4 shadow-lg">
+        <div className="text-2xl font-black tracking-wide mb-8 flex items-center gap-3">
+          <span className="bg-blue-700 p-2 rounded-xl"><LayoutDashboard size={32} /></span>
+          CallLogix
+        </div>
+        <nav className="flex-1">
+          {TABS.map(({ name, icon: Icon }) => (
+            <button
+              key={name}
+              onClick={() => setTab(name)}
+              className={`w-full flex items-center gap-3 p-3 rounded-lg my-1 transition ${
+                tab === name
+                  ? "bg-blue-700 text-white font-bold shadow"
+                  : "hover:bg-blue-800/70 text-blue-100"
+              }`}
+            >
+              <Icon size={22} />
+              {name}
+            </button>
+          ))}
+        </nav>
+        <div className="mt-auto pt-10 text-xs text-blue-200/60">
+          © {new Date().getFullYear()} CallLogix
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className="flex-1 p-10 bg-zinc-50 dark:bg-zinc-900">
+        <header className="mb-8 flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-blue-900 dark:text-blue-100">
+            {tab}
+          </h1>
+          {/* <input className="rounded px-4 py-2 bg-zinc-200 text-zinc-700" placeholder="Zoek..." /> */}
+        </header>
+
+        {/* Content switch */}
+        {tab === "Dashboard" && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="bg-white dark:bg-zinc-800 rounded-xl p-6 shadow flex flex-col items-center">
+              <span className="text-blue-700 dark:text-blue-400 mb-2"><Mic size={32} /></span>
+              <div className="text-3xl font-bold">–</div>
+              <div className="text-sm mt-2 text-zinc-500">Live Opnames</div>
+            </div>
+            <div className="bg-white dark:bg-zinc-800 rounded-xl p-6 shadow flex flex-col items-center">
+              <span className="text-blue-700 dark:text-blue-400 mb-2"><History size={32} /></span>
+              <div className="text-3xl font-bold">–</div>
+              <div className="text-sm mt-2 text-zinc-500">Opname Geschiedenis</div>
+            </div>
+            <div className="bg-white dark:bg-zinc-800 rounded-xl p-6 shadow flex flex-col items-center">
+              <span className="text-blue-700 dark:text-blue-400 mb-2"><Users size={32} /></span>
+              <div className="text-3xl font-bold">–</div>
+              <div className="text-sm mt-2 text-zinc-500">Gebruikers</div>
+            </div>
+            {/* Voeg meer cards toe indien nodig */}
+          </div>
+        )}
+
+        {tab === "Nieuwe opname" && (
+          <CallLogixTranscriptie />
+        )}
+
+        {tab === "Opname geschiedenis" && (
+          <div className="bg-white dark:bg-zinc-800 rounded-xl p-8 shadow">
+            <h2 className="text-lg font-bold mb-4">Eerdere opnames (hier kun je straks een lijst tonen uit je database/Supabase)</h2>
+            <div className="text-zinc-500">(Nog geen data gekoppeld)</div>
+          </div>
+        )}
+
+        {/* {tab === "Gebruikersbeheer" && (
+          <div className="bg-white dark:bg-zinc-800 rounded-xl p-8 shadow">
+            <h2 className="text-lg font-bold mb-4">Gebruikersbeheer</h2>
+            <div className="text-zinc-500">(Voor admins - optioneel later toevoegen)</div>
+          </div>
+        )} */}
+      </main>
     </div>
   );
 }
