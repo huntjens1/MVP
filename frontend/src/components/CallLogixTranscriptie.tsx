@@ -4,23 +4,27 @@ const apiBase = import.meta.env.VITE_API_BASE || '';
 
 export default function CallLogixTranscriptie() {
   const [recording, setRecording] = useState(false);
-  const [transcript, setTranscript] = useState("");
+  const [transcript, setTranscript] = useState<string[]>([]);
   const [interim, setInterim] = useState("");
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const lastSuggestionSentRef = useRef(""); // voorkomt dubbele suggesties
 
-  // Vraag AI-vraagsuggesties aan (OpenAI via backend)
-  async function getSuggestions(transcript: string) {
-    if (!transcript.trim() || transcript.trim() === lastSuggestionSentRef.current) return;
-    lastSuggestionSentRef.current = transcript.trim();
+  // Mapping: speaker 0 = Agent, speaker 1 = Gebruiker
+  function speakerLabel(speaker: number) {
+    return speaker === 0 ? "Agent" : "Gebruiker";
+  }
+
+  async function getSuggestions(currentTranscript: string) {
+    if (!currentTranscript.trim() || currentTranscript.trim() === lastSuggestionSentRef.current) return;
+    lastSuggestionSentRef.current = currentTranscript.trim();
 
     try {
       const resp = await fetch(`${apiBase}/api/suggest-question`, {
         method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ transcript }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transcript: currentTranscript }),
       });
       const data = await resp.json();
       if (data.suggestions) setSuggestions(data.suggestions);
@@ -30,7 +34,7 @@ export default function CallLogixTranscriptie() {
   }
 
   const startRecording = async () => {
-    setTranscript("");
+    setTranscript([]);
     setInterim("");
     setSuggestions([]);
     setRecording(true);
@@ -38,7 +42,9 @@ export default function CallLogixTranscriptie() {
     const tokenResp = await fetch(`${apiBase}/api/deepgram-token`, { method: "POST" });
     const tokenJson = await tokenResp.json();
     const token = tokenJson.token;
-    const wsUrl = `wss://api.deepgram.com/v1/listen?model=nova-2&language=nl&sample_rate=16000&interim_results=true&punctuate=true`;
+
+    // Diarization aan
+    const wsUrl = `wss://api.deepgram.com/v1/listen?model=nova-2&language=nl&sample_rate=16000&interim_results=true&punctuate=true&diarize=true`;
 
     wsRef.current = new WebSocket(wsUrl, ["bearer", token]);
     wsRef.current.onopen = () => {
@@ -63,18 +69,25 @@ export default function CallLogixTranscriptie() {
       try {
         const json = JSON.parse(event.data);
         if (json.channel?.alternatives?.[0]?.transcript !== undefined) {
+          const words = json.channel?.alternatives?.[0]?.words || [];
+          const speaker = words.length > 0 && words[0].speaker !== undefined ? words[0].speaker : 0;
+          const label = speakerLabel(speaker);
+
           if (json.is_final) {
-            setTranscript((prev) => {
-              const nieuw = (prev + " " + json.channel.alternatives[0].transcript).trim();
-              getSuggestions(nieuw);
+            setTranscript(prev => {
+              const regel = `${label}: ${json.channel.alternatives[0].transcript}`;
+              const nieuw = [...prev, regel];
+              getSuggestions(nieuw.join('\n'));
               return nieuw;
             });
             setInterim("");
           } else {
-            setInterim(json.channel.alternatives[0].transcript);
+            setInterim(`${label}: ${json.channel.alternatives[0].transcript}`);
           }
         }
-      } catch (e) { /* negeren */ }
+      } catch (e) {
+        // geen geldige JSON of structure, negeren
+      }
     };
   };
 
@@ -119,8 +132,10 @@ export default function CallLogixTranscriptie() {
             </div>
           </header>
           <div className="flex-1 flex flex-col">
-            <div className="rounded-xl bg-calllogix-dark min-h-[160px] p-6 text-xl leading-relaxed text-calllogix-text tracking-wide shadow-inner font-mono select-text">
-              <span className="opacity-95">{transcript}</span>
+            <div className="rounded-xl bg-calllogix-dark min-h-[160px] p-6 text-xl leading-relaxed text-calllogix-text tracking-wide shadow-inner font-mono select-text whitespace-pre-line">
+              {transcript.map((regel, i) => (
+                <div key={i}>{regel}</div>
+              ))}
               <span className="animate-pulse opacity-70 ml-2">{interim}</span>
             </div>
             <div className="text-right text-xs text-calllogix-subtext mt-2">
