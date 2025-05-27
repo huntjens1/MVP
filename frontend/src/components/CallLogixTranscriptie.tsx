@@ -1,5 +1,4 @@
 import { useRef, useState } from "react";
-import { useAuth } from "../AuthContext";
 
 const apiBase = import.meta.env.VITE_API_BASE || "";
 

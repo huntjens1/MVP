@@ -1,6 +1,6 @@
 import { LayoutDashboard, Mic, History } from "lucide-react";
 import type { ReactNode } from "react";
-import TopBar from "./components/TopBar";
+import TopBar from "./TopBar";
 
 const TABS = [
   { name: "Dashboard", icon: LayoutDashboard, path: "/app" },
