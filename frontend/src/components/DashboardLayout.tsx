@@ -1,5 +1,5 @@
 import { LayoutDashboard, Mic, History } from "lucide-react";
-import { ReactNode } from "react";
+import type { ReactNode } from "react";
 
 const TABS = [
   { name: "Dashboard", icon: LayoutDashboard, path: "/app" },
