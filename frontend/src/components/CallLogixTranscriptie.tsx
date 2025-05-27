@@ -3,25 +3,6 @@ import { useAuth } from "../AuthContext";
 
 const apiBase = import.meta.env.VITE_API_BASE || "";
 
-function UserBadge() {
-  const { user, role, signOut } = useAuth();
-  if (!user) return null;
-  return (
-    <div className="flex items-center gap-3 ml-auto">
-      <span className="text-sm font-bold bg-calllogix-card px-3 py-1 rounded-2xl shadow text-calllogix-primary flex items-center gap-2">
-        {user.email}
-        <span className="bg-calllogix-accent text-calllogix-dark rounded-xl px-2 py-1 ml-2 capitalize">{role}</span>
-      </span>
-      <button
-        className="ml-3 px-2 py-1 rounded font-bold bg-calllogix-primary text-calllogix-text hover:bg-calllogix-accent hover:text-calllogix-dark"
-        onClick={signOut}
-      >
-        Uitloggen
-      </button>
-    </div>
-  );
-}
-
 export default function CallLogixTranscriptie() {
   const [recording, setRecording] = useState(false);
   const [transcript, setTranscript] = useState<string[]>([]);
@@ -147,11 +128,10 @@ export default function CallLogixTranscriptie() {
       <div className="max-w-5xl mx-auto flex flex-col sm:flex-row gap-8 items-stretch">
         {/* Transcriptie panel */}
         <section className="flex-1 bg-calllogix-card rounded-3xl shadow-2xl p-8 border border-calllogix-primary/30 flex flex-col">
-          <header className="flex items-center justify-between mb-8">
+          <header className="mb-8">
             <h2 className="text-3xl font-black text-calllogix-primary drop-shadow">
               Live Transcriptie
             </h2>
-            <UserBadge />
           </header>
           <div className="flex-1 flex flex-col rounded-xl bg-calllogix-dark min-h-[160px] p-2 md:p-6 shadow-inner gap-2">
             {transcript.length === 0 && (
@@ -161,7 +141,7 @@ export default function CallLogixTranscriptie() {
             )}
             {transcript.map((regel, i) => {
               const { label, text, speaker } = parseLine(regel);
-              if (!text) return null; // Geen tekst? Sla over!
+              if (!text) return null;
               const isAgent = label === "Agent";
               const roleClass = isAgent
                 ? "bg-calllogix-primary/90 text-calllogix-text"
@@ -220,10 +200,8 @@ export default function CallLogixTranscriptie() {
               );
             })()}
           </div>
-          <div className="text-right text-xs text-calllogix-subtext mt-2">
-            {recording ? "Opname loopt..." : "Klik op Start om te beginnen"}
-          </div>
-          <div className="flex gap-3 mt-4">
+          {/* Start/Stop buttons netjes onderaan */}
+          <div className="flex gap-3 mt-6 justify-center">
             <button
               className={`px-5 py-2 rounded-xl font-bold transition shadow ${
                 recording
@@ -246,6 +224,9 @@ export default function CallLogixTranscriptie() {
             >
               ■ Stop
             </button>
+          </div>
+          <div className="text-right text-xs text-calllogix-subtext mt-2">
+            {recording ? "Opname loopt..." : "Klik op Start om te beginnen"}
           </div>
         </section>
         {/* Suggesties panel */}
