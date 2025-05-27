@@ -26,6 +26,13 @@ export const AuthContext = createContext<AuthContextType>({
   isLoading: false,
 });
 
+async function signOut() {
+  await supabase.auth.signOut();
+  setUser(null);
+  setRole("");
+  window.location.href = "/auth"; // Stuur altijd naar loginpagina
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserData | null>(null);
   const [role, setRole] = useState<string>("");
