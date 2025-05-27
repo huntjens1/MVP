@@ -2,7 +2,6 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { createClient } from "@supabase/supabase-js";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 
-// Vul je env vars in zoals in je project!
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL!;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
@@ -64,7 +63,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line
   }, []);
 
-  // Haal uit je eigen `users` tabel de rol (en evt. andere info)
   async function fetchUserRole(user: SupabaseUser) {
     setIsLoading(true);
     const { data } = await supabase
@@ -100,7 +98,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// Handige hook voor gebruik in componenten
 export function useAuth() {
   return useContext(AuthContext);
 }

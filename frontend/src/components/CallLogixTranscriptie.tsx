@@ -1,14 +1,11 @@
-import { useRef, useState, useContext } from "react";
-// Pas het pad hieronder aan als je AuthContext elders hebt staan!
-import { AuthContext } from "../AuthContext"; 
+import { useRef, useState } from "react";
+import { useAuth } from "../AuthContext";
 
 const apiBase = import.meta.env.VITE_API_BASE || "";
 
 function UserBadge() {
-  const { user, role, signOut, isLoading } = useAuth();
-
+  const { user, role, signOut } = useAuth();
   if (!user) return null;
-
   return (
     <div className="flex items-center gap-3 ml-auto">
       <span className="text-sm font-bold bg-calllogix-card px-3 py-1 rounded-2xl shadow text-calllogix-primary flex items-center gap-2">
@@ -25,7 +22,6 @@ function UserBadge() {
   );
 }
 
-// ——— HOOFD COMPONENT ———
 export default function CallLogixTranscriptie() {
   const [recording, setRecording] = useState(false);
   const [transcript, setTranscript] = useState<string[]>([]);
@@ -35,7 +31,6 @@ export default function CallLogixTranscriptie() {
   const wsRef = useRef<WebSocket | null>(null);
   const lastSuggestionSentRef = useRef("");
 
-  // Mapping: speaker 0 = Agent, speaker 1 = Gebruiker
   function speakerLabel(speaker: number) {
     return speaker === 0 ? "Agent" : "Gebruiker";
   }
@@ -50,7 +45,6 @@ export default function CallLogixTranscriptie() {
     )
       return;
     lastSuggestionSentRef.current = currentTranscript.trim();
-
     try {
       const resp = await fetch(`${apiBase}/api/suggest-question`, {
         method: "POST",
@@ -59,9 +53,7 @@ export default function CallLogixTranscriptie() {
       });
       const data = await resp.json();
       if (data.suggestions) setSuggestions(data.suggestions);
-    } catch {
-      // optioneel: foutmelding
-    }
+    } catch {}
   }
 
   const startRecording = async () => {
@@ -75,8 +67,6 @@ export default function CallLogixTranscriptie() {
     });
     const tokenJson = await tokenResp.json();
     const token = tokenJson.token;
-
-    // Diarization aan
     const wsUrl = `wss://api.deepgram.com/v1/listen?model=nova-2&language=nl&sample_rate=16000&interim_results=true&punctuate=true&diarize=true`;
 
     wsRef.current = new WebSocket(wsUrl, ["bearer", token]);
@@ -111,8 +101,6 @@ export default function CallLogixTranscriptie() {
               : 0;
           const label = speakerLabel(speaker);
           const tekst = json.channel.alternatives[0].transcript?.trim();
-
-          // ALLEEN toevoegen als er echt tekst is!
           if (json.is_final && tekst) {
             setTranscript((prev) => {
               const regel = `${label}: ${tekst}|||${speaker}`;
@@ -129,9 +117,7 @@ export default function CallLogixTranscriptie() {
             setInterim(tekst ? `${label}: ${tekst}|||${speaker}` : "");
           }
         }
-      } catch (e) {
-        // geen geldige JSON of structure, negeren
-      }
+      } catch (e) {}
     };
   };
 
@@ -156,7 +142,6 @@ export default function CallLogixTranscriptie() {
     return { label, text, speaker };
   }
 
-  // Transcriptie UI chatstijl
   return (
     <main className="min-h-screen bg-calllogix-dark px-2 py-8">
       <div className="max-w-5xl mx-auto flex flex-col sm:flex-row gap-8 items-stretch">
@@ -238,6 +223,30 @@ export default function CallLogixTranscriptie() {
           <div className="text-right text-xs text-calllogix-subtext mt-2">
             {recording ? "Opname loopt..." : "Klik op Start om te beginnen"}
           </div>
+          <div className="flex gap-3 mt-4">
+            <button
+              className={`px-5 py-2 rounded-xl font-bold transition shadow ${
+                recording
+                  ? "bg-calllogix-primary/40 text-calllogix-text cursor-not-allowed"
+                  : "bg-calllogix-accent text-calllogix-dark hover:bg-calllogix-primary hover:text-calllogix-text"
+              }`}
+              onClick={startRecording}
+              disabled={recording}
+            >
+              <span className="font-black text-lg">●</span> Start
+            </button>
+            <button
+              className={`px-5 py-2 rounded-xl font-bold transition shadow ${
+                !recording
+                  ? "bg-calllogix-primary/40 text-calllogix-text cursor-not-allowed"
+                  : "bg-calllogix-primary text-calllogix-text hover:bg-calllogix-accent hover:text-calllogix-dark"
+              }`}
+              onClick={stopRecording}
+              disabled={!recording}
+            >
+              ■ Stop
+            </button>
+          </div>
         </section>
         {/* Suggesties panel */}
         <aside className="w-full sm:w-80 bg-calllogix-card rounded-3xl p-8 border border-calllogix-accent/40 shadow-2xl flex flex-col">
@@ -259,7 +268,6 @@ export default function CallLogixTranscriptie() {
           </ul>
         </aside>
       </div>
-      {/* Footer */}
       <footer className="mt-10 text-center text-calllogix-subtext text-sm">
         <span className="font-semibold text-calllogix-accent">CallLogix</span>{" "}
         — Powered by Deepgram, OpenAI & Supabase — v1.0 MVP
