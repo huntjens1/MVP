@@ -23,24 +23,27 @@ export default function AdminDashboard() {
     supabase.from("users").select("id, email, role, tenant_id").then(({ data }) => setUsers(data || []));
   }, [refresh]);
 
-  // User invite: verstuur invite via Supabase backend (mail), voeg in users-tabel toe met rol/tenant
+  // User invite: via backend endpoint!
   async function handleInviteUser(e: React.FormEvent) {
     e.preventDefault();
-    // Invite via Supabase Auth (let op: user moet via e-mail activeren)
-    const { error } = await supabase.auth.admin.inviteUserByEmail(newUser.email);
-    if (!error) {
-      // Voeg direct user-row toe voor deze gebruiker
-      await supabase.from("users").insert({
-        id: crypto.randomUUID(), // LET OP: update met juiste id na activatie!
+
+    const res = await fetch(`${import.meta.env.VITE_API_BASE}/api/invite-user`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
         email: newUser.email,
         role: newUser.role,
         tenant_id: newUser.tenant_id,
-      });
+      }),
+    });
+
+    if (res.ok) {
       setNewUser({ email: "", role: "support", tenant_id: "" });
       setRefresh(x => x + 1);
-      alert("Invite sent and user added! User must activate via email.");
+      alert("Gebruiker uitgenodigd! (Mail sturen komt in de volgende stap)");
     } else {
-      alert(error.message);
+      const data = await res.json();
+      alert(data.error || "Fout bij uitnodigen gebruiker");
     }
   }
 
