@@ -71,13 +71,38 @@ export default function LiveTranscribe() {
   };
 
   return (
-    <div>
-      <h2>Live Transcriptie</h2>
-      <button onClick={startRecording} disabled={recording}>Start opname</button>
-      <button onClick={stopRecording} disabled={!recording}>Stop opname</button>
-      <div style={{marginTop: 16, background: "#222", color: "#0ff", padding: 12, borderRadius: 8}}>
-        <strong>Live transcriptie:</strong>
-        <div style={{marginTop: 8}}>{transcript} <span style={{opacity: 0.7}}>{interim}</span></div>
+    <div className="bg-calllogix-card rounded-2xl shadow-xl p-8 max-w-2xl mx-auto">
+      <h2 className="text-2xl font-black text-calllogix-primary mb-6">Live Transcriptie</h2>
+      <div className="flex gap-4 mb-6">
+        <button
+          className={`px-6 py-2 rounded-xl font-bold transition shadow ${
+            recording
+              ? "bg-calllogix-primary/40 text-calllogix-text cursor-not-allowed"
+              : "bg-calllogix-accent text-calllogix-dark hover:bg-calllogix-primary hover:text-calllogix-text"
+          }`}
+          onClick={startRecording}
+          disabled={recording}
+        >
+          ● Start opname
+        </button>
+        <button
+          className={`px-6 py-2 rounded-xl font-bold transition shadow ${
+            !recording
+              ? "bg-calllogix-primary/40 text-calllogix-text cursor-not-allowed"
+              : "bg-calllogix-primary text-calllogix-text hover:bg-calllogix-accent hover:text-calllogix-dark"
+          }`}
+          onClick={stopRecording}
+          disabled={!recording}
+        >
+          ■ Stop opname
+        </button>
+      </div>
+      <div className="bg-calllogix-dark rounded-xl p-6 min-h-[120px] text-lg font-mono text-calllogix-text shadow-inner select-text">
+        <span className="opacity-95">{transcript}</span>
+        <span className="animate-pulse opacity-70 ml-2">{interim}</span>
+      </div>
+      <div className="text-right text-calllogix-subtext mt-2 text-xs">
+        {recording ? "Opname loopt..." : "Klik op Start om te beginnen"}
       </div>
     </div>
   );
