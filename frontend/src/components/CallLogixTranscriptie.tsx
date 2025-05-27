@@ -11,7 +11,7 @@ export default function CallLogixTranscriptie() {
   const wsRef = useRef<WebSocket | null>(null);
   const lastSuggestionSentRef = useRef(""); // voorkomt dubbele suggesties
 
-  // Vraag OpenAI suggesties aan (zoals eerder)
+  // Vraag OpenAI suggesties aan
   async function getSuggestions(transcript: string) {
     if (!transcript.trim() || transcript.trim() === lastSuggestionSentRef.current) return;
     lastSuggestionSentRef.current = transcript.trim();
@@ -62,7 +62,7 @@ export default function CallLogixTranscriptie() {
           if (json.is_final) {
             setTranscript((prev) => {
               const nieuw = (prev + " " + json.channel.alternatives[0].transcript).trim();
-              getSuggestions(nieuw); // vraag suggesties bij elk nieuw stuk tekst
+              getSuggestions(nieuw);
               return nieuw;
             });
             setInterim("");
@@ -83,16 +83,18 @@ export default function CallLogixTranscriptie() {
   };
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-zinc-900 via-zinc-950 to-cyan-950 px-2 py-8">
+    <main className="min-h-screen bg-calllogix-dark px-2 py-8">
       <div className="max-w-5xl mx-auto flex flex-col sm:flex-row gap-8 items-stretch">
         {/* Transcriptie panel */}
-        <section className="flex-1 bg-zinc-900 rounded-3xl shadow-2xl p-8 border border-zinc-800 flex flex-col">
+        <section className="flex-1 bg-calllogix-card rounded-3xl shadow-2xl p-8 border border-calllogix-primary/30 flex flex-col">
           <header className="flex items-center justify-between mb-8">
-            <h2 className="text-3xl font-bold text-cyan-400 drop-shadow">Live Transcriptie</h2>
+            <h2 className="text-3xl font-black text-calllogix-primary drop-shadow">Live Transcriptie</h2>
             <div className="flex gap-2">
               <button
-                className={`px-5 py-2 rounded-xl font-semibold mr-2 transition ${
-                  recording ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed' : 'bg-cyan-600 hover:bg-cyan-700 text-white'
+                className={`px-5 py-2 rounded-xl font-bold mr-2 transition shadow ${
+                  recording
+                    ? "bg-calllogix-primary/40 text-calllogix-text cursor-not-allowed"
+                    : "bg-calllogix-accent text-calllogix-dark hover:bg-calllogix-primary hover:text-calllogix-text"
                 }`}
                 onClick={startRecording}
                 disabled={recording}
@@ -100,8 +102,10 @@ export default function CallLogixTranscriptie() {
                 <span className="font-black text-lg">●</span> Start
               </button>
               <button
-                className={`px-5 py-2 rounded-xl font-semibold transition ${
-                  !recording ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700 text-white'
+                className={`px-5 py-2 rounded-xl font-bold transition shadow ${
+                  !recording
+                    ? "bg-calllogix-primary/40 text-calllogix-text cursor-not-allowed"
+                    : "bg-calllogix-primary text-calllogix-text hover:bg-calllogix-accent hover:text-calllogix-dark"
                 }`}
                 onClick={stopRecording}
                 disabled={!recording}
@@ -111,22 +115,22 @@ export default function CallLogixTranscriptie() {
             </div>
           </header>
           <div className="flex-1 flex flex-col">
-            <div className="rounded-xl bg-zinc-800 min-h-[160px] p-6 text-xl leading-relaxed text-cyan-100 tracking-wide shadow-inner font-mono select-text">
-              <span className="opacity-90">{transcript}</span>
-              <span className="animate-pulse opacity-60 ml-2">{interim}</span>
+            <div className="rounded-xl bg-calllogix-dark min-h-[160px] p-6 text-xl leading-relaxed text-calllogix-text tracking-wide shadow-inner font-mono select-text">
+              <span className="opacity-95">{transcript}</span>
+              <span className="animate-pulse opacity-70 ml-2">{interim}</span>
             </div>
-            <div className="text-right text-xs text-zinc-500 mt-2">
+            <div className="text-right text-xs text-calllogix-subtext mt-2">
               {recording ? 'Opname loopt...' : 'Klik op Start om te beginnen'}
             </div>
           </div>
         </section>
         {/* Suggesties panel */}
-        <aside className="w-full sm:w-80 bg-zinc-950 rounded-3xl p-8 border border-cyan-700/40 shadow-2xl flex flex-col">
-          <h3 className="text-xl font-bold mb-6 text-cyan-300 drop-shadow">AI Vraagsuggesties</h3>
+        <aside className="w-full sm:w-80 bg-calllogix-card rounded-3xl p-8 border border-calllogix-accent/40 shadow-2xl flex flex-col">
+          <h3 className="text-xl font-bold mb-6 text-calllogix-accent drop-shadow">AI Vraagsuggesties</h3>
           <ul className="space-y-4 flex-1">
             {suggestions.length === 0 && <li className="opacity-40">Nog geen suggesties...</li>}
             {suggestions.map((s, i) => (
-              <li key={i} className="bg-zinc-800 text-cyan-100 rounded-2xl p-4 border border-cyan-900 shadow">
+              <li key={i} className="bg-calllogix-dark text-calllogix-accent rounded-2xl p-4 border border-calllogix-primary/30 shadow">
                 <span className="font-medium">{s}</span>
               </li>
             ))}
@@ -134,8 +138,8 @@ export default function CallLogixTranscriptie() {
         </aside>
       </div>
       {/* Footer */}
-      <footer className="mt-10 text-center text-zinc-600 text-sm">
-        <span className="font-semibold text-cyan-300">CallLogix</span> — Powered by Deepgram, OpenAI & Supabase — v1.0 MVP
+      <footer className="mt-10 text-center text-calllogix-subtext text-sm">
+        <span className="font-semibold text-calllogix-accent">CallLogix</span> — Powered by Deepgram, OpenAI & Supabase — v1.0 MVP
       </footer>
     </main>
   );
