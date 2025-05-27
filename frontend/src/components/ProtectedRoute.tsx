@@ -1,8 +1,11 @@
-// src/components/ProtectedRoute.tsx
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 
-export default function ProtectedRoute({ children }: { children: JSX.Element }) {
+type ProtectedRouteProps = {
+  children: React.ReactNode;
+};
+
+export default function ProtectedRoute({ children }: ProtectedRouteProps) {
   const { user, isLoading } = useAuth();
   const location = useLocation();
 
@@ -14,5 +17,5 @@ export default function ProtectedRoute({ children }: { children: JSX.Element }) 
     return <Navigate to="/auth" state={{ from: location }} replace />;
   }
 
-  return children;
+  return <>{children}</>;
 }
