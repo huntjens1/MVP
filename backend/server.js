@@ -5,7 +5,6 @@ import fetch from 'node-fetch'; // npm install node-fetch
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
 import suggestQuestionRouter from './routes/suggestQuestion.js';
-app.use(suggestQuestionRouter);
 
 dotenv.config();
 
@@ -22,6 +21,9 @@ const supabase = createClient(
 app.use(express.static('public'));
 app.use(cors());
 app.use(express.json());
+
+// === SUGGESTION ROUTER NA DE INITIALISATIE! ===
+app.use(suggestQuestionRouter);
 
 // === Health endpoint ===
 app.get('/api/health', (req, res) => {
@@ -41,7 +43,6 @@ app.post('/api/deepgram-token', async (req, res) => {
         },
         body: JSON.stringify({
           scopes: ["listen:stream"],
-          // expires_in: 1800 // optioneel: aantal seconden geldig (max 3600)
         }),
       }
     );
