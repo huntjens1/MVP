@@ -11,7 +11,7 @@ export default function DashboardLayoutRouter() {
   const location = useLocation();
   const navigate = useNavigate();
 
-  // Zorg dat bij nested paths (zoals /app/) altijd correct gemapt wordt
+  // Haal actieve tab uit url path
   const base = location.pathname.startsWith("/app/") && location.pathname !== "/app"
     ? `/app/${location.pathname.split("/")[2] || ""}`.replace(/\/$/, "")
     : location.pathname;
