@@ -67,7 +67,7 @@ app.post('/api/live-transcript', (req, res) => {
   res.json({ status: 'ok', received: transcript });
 });
 
-// === Invite-user endpoint ===
+// === Invite-user endpoint met dubbele check ===
 app.post('/api/invite-user', async (req, res) => {
   const { email, role, tenant_id } = req.body;
 
@@ -75,7 +75,23 @@ app.post('/api/invite-user', async (req, res) => {
     return res.status(400).json({ error: "Missing fields" });
   }
 
-  // 1. Maak een Auth user aan in Supabase
+  // 1. Controleer of user al bestaat in users-tabel
+  const { data: existingUser } = await supabase
+    .from("users")
+    .select("id")
+    .eq("email", email)
+    .single();
+  if (existingUser) {
+    return res.status(400).json({ error: "Gebruiker bestaat al" });
+  }
+
+  // 2. Controleer of user al bestaat in Supabase Auth
+  const { data: usersList, error: authListError } = await supabase.auth.admin.listUsers({ email });
+  if (usersList && usersList.users && usersList.users.length > 0) {
+    return res.status(400).json({ error: "Gebruiker is al geregistreerd" });
+  }
+
+  // 3. Maak een Auth user aan in Supabase
   const { data: authUser, error: authError } = await supabase.auth.admin.createUser({
     email,
     email_confirm: false,
@@ -83,7 +99,7 @@ app.post('/api/invite-user', async (req, res) => {
   });
   if (authError) return res.status(400).json({ error: authError.message });
 
-  // 2. Voeg toe aan users-tabel met exact dezelfde id
+  // 4. Voeg toe aan users-tabel met exact dezelfde id
   const { error: userError } = await supabase
     .from("users")
     .insert([
