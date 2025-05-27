@@ -1,5 +1,6 @@
 import { LayoutDashboard, Mic, History } from "lucide-react";
 import type { ReactNode } from "react";
+import TopBar from "./TopBar";
 
 const TABS = [
   { name: "Dashboard", icon: LayoutDashboard, path: "/app" },
@@ -15,7 +16,8 @@ type DashboardLayoutProps = {
 
 export default function DashboardLayout({ activeTab, setTab, children }: DashboardLayoutProps) {
   return (
-    <div className="flex min-h-screen bg-calllogix-dark">
+    <div className="flex min-h-screen bg-calllogix-dark relative">
+      <TopBar />
       {/* Sidebar */}
       <aside className="w-64 bg-calllogix-primary text-calllogix-text flex flex-col py-8 px-4 shadow-lg">
         <div className="text-2xl font-black tracking-wide mb-8 flex items-center gap-3">
@@ -47,8 +49,8 @@ export default function DashboardLayout({ activeTab, setTab, children }: Dashboa
           © {new Date().getFullYear()} CallLogix
         </div>
       </aside>
-      {/* Main content */}
-      <main className="flex-1 p-10 bg-calllogix-dark min-h-screen">
+      {/* Main content (extra padding-top vanwege TopBar) */}
+      <main className="flex-1 p-10 bg-calllogix-dark min-h-screen pt-24">
         {children}
       </main>
     </div>
