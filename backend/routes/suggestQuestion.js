@@ -1,9 +1,9 @@
 import express from 'express';
-import { Configuration, OpenAIApi } from 'openai';
+import OpenAI from "openai";
 
 const router = express.Router();
 
-const openai = new OpenAIApi(new Configuration({ apiKey: process.env.OPENAI_API_KEY }));
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 router.post('/api/suggest-question', async (req, res) => {
   const { transcript } = req.body;
@@ -23,8 +23,8 @@ ${transcript}
 - 
     `;
 
-    const completion = await openai.createChatCompletion({
-      model: "gpt-3.5-turbo", // Of "gpt-4o" voor betere suggesties
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo", // Of "gpt-4o" voor nog betere suggesties
       messages: [
         { role: "system", content: "Je bent een slimme IT-servicedesk-assistent. Je output moet alleen een lijst met korte suggestievragen zijn." },
         { role: "user", content: prompt }
@@ -33,7 +33,7 @@ ${transcript}
       temperature: 0.4,
     });
 
-    const text = completion.data.choices[0].message?.content || "";
+    const text = completion.choices[0].message?.content || "";
     const suggestions = text
       .split("\n")
       .map(l => l.replace(/^[-•]\s*/, "").trim())
