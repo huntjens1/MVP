@@ -1,7 +1,31 @@
-import { useRef, useState } from "react";
+import { useRef, useState, useContext } from "react";
+// Pas het pad hieronder aan als je AuthContext elders hebt staan!
+import { AuthContext } from "../context/AuthContext"; 
 
 const apiBase = import.meta.env.VITE_API_BASE || "";
 
+function UserBadge() {
+  const { user, role, signOut } = useContext(AuthContext);
+
+  if (!user) return null;
+
+  return (
+    <div className="flex items-center gap-3 ml-auto">
+      <span className="text-sm font-bold bg-calllogix-card px-3 py-1 rounded-2xl shadow text-calllogix-primary flex items-center gap-2">
+        {user.email}
+        <span className="bg-calllogix-accent text-calllogix-dark rounded-xl px-2 py-1 ml-2 capitalize">{role}</span>
+      </span>
+      <button
+        className="ml-3 px-2 py-1 rounded font-bold bg-calllogix-primary text-calllogix-text hover:bg-calllogix-accent hover:text-calllogix-dark"
+        onClick={signOut}
+      >
+        Uitloggen
+      </button>
+    </div>
+  );
+}
+
+// ——— HOOFD COMPONENT ———
 export default function CallLogixTranscriptie() {
   const [recording, setRecording] = useState(false);
   const [transcript, setTranscript] = useState<string[]>([]);
@@ -86,10 +110,12 @@ export default function CallLogixTranscriptie() {
               ? words[0].speaker
               : 0;
           const label = speakerLabel(speaker);
+          const tekst = json.channel.alternatives[0].transcript?.trim();
 
-          if (json.is_final) {
+          // ALLEEN toevoegen als er echt tekst is!
+          if (json.is_final && tekst) {
             setTranscript((prev) => {
-              const regel = `${label}: ${json.channel.alternatives[0].transcript}|||${speaker}`;
+              const regel = `${label}: ${tekst}|||${speaker}`;
               const nieuw = [...prev, regel];
               getSuggestions(
                 nieuw
@@ -99,10 +125,8 @@ export default function CallLogixTranscriptie() {
               return nieuw;
             });
             setInterim("");
-          } else {
-            setInterim(
-              `${label}: ${json.channel.alternatives[0].transcript}|||${speaker}`
-            );
+          } else if (!json.is_final) {
+            setInterim(tekst ? `${label}: ${tekst}|||${speaker}` : "");
           }
         }
       } catch (e) {
@@ -122,7 +146,6 @@ export default function CallLogixTranscriptie() {
     wsRef.current?.close();
   };
 
-  // Helper om label en speaker te splitsen (voor styling)
   function parseLine(line: string) {
     if (!line) return { label: "", text: "", speaker: 0 };
     const [prefix, speakerStr] = line.split("|||");
@@ -143,30 +166,7 @@ export default function CallLogixTranscriptie() {
             <h2 className="text-3xl font-black text-calllogix-primary drop-shadow">
               Live Transcriptie
             </h2>
-            <div className="flex gap-2">
-              <button
-                className={`px-5 py-2 rounded-xl font-bold mr-2 transition shadow ${
-                  recording
-                    ? "bg-calllogix-primary/40 text-calllogix-text cursor-not-allowed"
-                    : "bg-calllogix-accent text-calllogix-dark hover:bg-calllogix-primary hover:text-calllogix-text"
-                }`}
-                onClick={startRecording}
-                disabled={recording}
-              >
-                <span className="font-black text-lg">●</span> Start
-              </button>
-              <button
-                className={`px-5 py-2 rounded-xl font-bold transition shadow ${
-                  !recording
-                    ? "bg-calllogix-primary/40 text-calllogix-text cursor-not-allowed"
-                    : "bg-calllogix-primary text-calllogix-text hover:bg-calllogix-accent hover:text-calllogix-dark"
-                }`}
-                onClick={stopRecording}
-                disabled={!recording}
-              >
-                ■ Stop
-              </button>
-            </div>
+            <UserBadge />
           </header>
           <div className="flex-1 flex flex-col rounded-xl bg-calllogix-dark min-h-[160px] p-2 md:p-6 shadow-inner gap-2">
             {transcript.length === 0 && (
@@ -176,6 +176,7 @@ export default function CallLogixTranscriptie() {
             )}
             {transcript.map((regel, i) => {
               const { label, text, speaker } = parseLine(regel);
+              if (!text) return null; // Geen tekst? Sla over!
               const isAgent = label === "Agent";
               const roleClass = isAgent
                 ? "bg-calllogix-primary/90 text-calllogix-text"
@@ -207,6 +208,7 @@ export default function CallLogixTranscriptie() {
             })}
             {interim && (() => {
               const { label, text, speaker } = parseLine(interim);
+              if (!text) return null;
               const isAgent = label === "Agent";
               const badgeClass = isAgent
                 ? "bg-calllogix-primary text-calllogix-text"

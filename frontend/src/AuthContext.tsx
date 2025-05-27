@@ -1,101 +1,102 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
-import { supabase } from "./supabaseClient";
+import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { createClient, User as SupabaseUser } from "@supabase/supabase-js";
 
-type User = {
+// Vul je env vars in zoals in je project!
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL!;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY!;
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+type UserData = {
   id: string;
-  email: string;
-  role: string | null; // bijv. "admin", "support", "user"
-  tenant_id: string | null;
+  email: string | null;
+  role: string;
 };
 
-type AuthContextProps = {
-  user: User | null;
-  loading: boolean;
-  signIn: (email: string, password: string) => Promise<any>;
-  signUp: (email: string, password: string) => Promise<any>;
-  signOut: () => Promise<any>;
+type AuthContextType = {
+  user: UserData | null;
+  role: string;
+  signOut: () => Promise<void>;
+  isLoading: boolean;
 };
 
-const AuthContext = createContext<AuthContextProps>({
+export const AuthContext = createContext<AuthContextType>({
   user: null,
-  loading: true,
-  signIn: async () => {},
-  signUp: async () => {},
+  role: "",
   signOut: async () => {},
+  isLoading: false,
 });
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  // Helper om extra user-info op te halen (rol + tenant)
-  const fetchUserDetails = async (id: string) => {
-    // Haal user info uit Supabase (uit je "users" tabel!)
-    const { data, error } = await supabase
-      .from("users")
-      .select("id, email, role, tenant_id")
-      .eq("id", id)
-      .single();
-
-    if (error) return null;
-    return data as User;
-  };
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<UserData | null>(null);
+  const [role, setRole] = useState<string>("");
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // "session" wordt niet als variable gedeclareerd
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        fetchUserDetails(session.user.id).then((details) => {
-          setUser(details);
-          setLoading(false);
-        });
-      } else {
-        setUser(null);
-        setLoading(false);
-      }
-    });
+    const session = supabase.auth.session?.();
+    if (session && session.user) {
+      // Ophalen van role uit je eigen users-tabel (Supabase)
+      fetchUserRole(session.user);
+    } else {
+      setUser(null);
+      setRole("");
+      setIsLoading(false);
+    }
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        fetchUserDetails(session.user.id).then((details) => setUser(details));
-      } else {
-        setUser(null);
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        if (session && session.user) {
+          fetchUserRole(session.user);
+        } else {
+          setUser(null);
+          setRole("");
+        }
+        setIsLoading(false);
       }
-    });
+    );
 
     return () => {
-      listener?.subscription.unsubscribe();
+      authListener?.unsubscribe();
     };
     // eslint-disable-next-line
   }, []);
 
-  const signIn = async (email: string, password: string) => {
-    setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    setLoading(false);
-    return error;
-  };
+  // Haal uit je eigen `users` tabel de rol (en evt. andere info)
+  async function fetchUserRole(user: SupabaseUser) {
+    setIsLoading(true);
+    const { data, error } = await supabase
+      .from("users")
+      .select("id, email, role")
+      .eq("id", user.id)
+      .single();
+    if (data) {
+      setUser({ id: data.id, email: data.email, role: data.role });
+      setRole(data.role);
+    } else {
+      setUser({
+        id: user.id,
+        email: user.email,
+        role: "",
+      });
+      setRole("");
+    }
+    setIsLoading(false);
+  }
 
-  const signUp = async (email: string, password: string) => {
-    setLoading(true);
-    const { error } = await supabase.auth.signUp({ email, password });
-    setLoading(false);
-    return error;
-  };
-
-  const signOut = async () => {
-    setLoading(true);
+  async function signOut() {
     await supabase.auth.signOut();
-    setLoading(false);
-  };
+    setUser(null);
+    setRole("");
+    window.location.href = "/"; // refresh of redirect naar login
+  }
 
   return (
-    <AuthContext.Provider value={{ user, loading, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ user, role, signOut, isLoading }}>
       {children}
     </AuthContext.Provider>
   );
 }
 
+// Handige hook voor gebruik in componenten
 export function useAuth() {
   return useContext(AuthContext);
 }
