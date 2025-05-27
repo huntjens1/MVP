@@ -1,5 +1,6 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import { createClient, User as SupabaseUser } from "@supabase/supabase-js";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createClient } from "@supabase/supabase-js";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
 
 // Vul je env vars in zoals in je project!
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL!;
@@ -32,30 +33,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const session = supabase.auth.session?.();
-    if (session && session.user) {
-      // Ophalen van role uit je eigen users-tabel (Supabase)
-      fetchUserRole(session.user);
-    } else {
-      setUser(null);
-      setRole("");
-      setIsLoading(false);
-    }
-
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
+    let ignore = false;
+    async function checkSession() {
+      const { data } = await supabase.auth.getSession();
+      const session = data.session;
+      if (!ignore) {
         if (session && session.user) {
           fetchUserRole(session.user);
         } else {
           setUser(null);
           setRole("");
+          setIsLoading(false);
         }
-        setIsLoading(false);
       }
-    );
-
+    }
+    checkSession();
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session && session.user) {
+        fetchUserRole(session.user);
+      } else {
+        setUser(null);
+        setRole("");
+      }
+      setIsLoading(false);
+    });
     return () => {
-      authListener?.unsubscribe();
+      ignore = true;
+      listener.subscription.unsubscribe();
     };
     // eslint-disable-next-line
   }, []);
@@ -63,18 +67,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Haal uit je eigen `users` tabel de rol (en evt. andere info)
   async function fetchUserRole(user: SupabaseUser) {
     setIsLoading(true);
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("users")
       .select("id, email, role")
       .eq("id", user.id)
       .single();
     if (data) {
-      setUser({ id: data.id, email: data.email, role: data.role });
-      setRole(data.role);
+      setUser({ id: data.id, email: data.email ?? null, role: data.role ?? "" });
+      setRole(data.role ?? "");
     } else {
       setUser({
         id: user.id,
-        email: user.email,
+        email: user.email ?? null,
         role: "",
       });
       setRole("");

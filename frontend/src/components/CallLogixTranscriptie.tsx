@@ -1,11 +1,11 @@
 import { useRef, useState, useContext } from "react";
 // Pas het pad hieronder aan als je AuthContext elders hebt staan!
-import { AuthContext } from "../context/AuthContext"; 
+import { AuthContext } from "../AuthContext"; 
 
 const apiBase = import.meta.env.VITE_API_BASE || "";
 
 function UserBadge() {
-  const { user, role, signOut } = useContext(AuthContext);
+  const { user, role, signOut, isLoading } = useAuth();
 
   if (!user) return null;
 
