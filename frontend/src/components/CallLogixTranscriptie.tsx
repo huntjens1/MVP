@@ -11,18 +11,22 @@ export default function CallLogixTranscriptie() {
   const wsRef = useRef<WebSocket | null>(null);
   const lastSuggestionSentRef = useRef(""); // voorkomt dubbele suggesties
 
-  // Vraag OpenAI suggesties aan
+  // Vraag AI-vraagsuggesties aan (OpenAI via backend)
   async function getSuggestions(transcript: string) {
     if (!transcript.trim() || transcript.trim() === lastSuggestionSentRef.current) return;
     lastSuggestionSentRef.current = transcript.trim();
 
-    const resp = await fetch(`${apiBase}/api/suggest-question`, {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ transcript }),
-    });
-    const data = await resp.json();
-    if (data.suggestions) setSuggestions(data.suggestions);
+    try {
+      const resp = await fetch(`${apiBase}/api/suggest-question`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ transcript }),
+      });
+      const data = await resp.json();
+      if (data.suggestions) setSuggestions(data.suggestions);
+    } catch {
+      // optioneel: foutmelding
+    }
   }
 
   const startRecording = async () => {

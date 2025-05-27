@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 import fetch from 'node-fetch'; // npm install node-fetch
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
+import suggestQuestionRouter from './routes/suggestQuestion.js';
+app.use(suggestQuestionRouter);
 
 dotenv.config();
 
