@@ -1,12 +1,7 @@
 import { useState } from "react";
-import supabase from "../supabaseClient";
+import { supabase } from "../supabaseClient";
 import { Link } from "react-router-dom";
 import { useAuth } from "../AuthContext";
-
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL!,
-  import.meta.env.VITE_SUPABASE_ANON_KEY!
-);
 
 export default function AuthPanel() {
   const { isLoading } = useAuth();

@@ -1,10 +1,5 @@
 import { useState } from "react";
-import supabase from "../supabaseClient";
-
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL!,
-  import.meta.env.VITE_SUPABASE_ANON_KEY!
-);
+import { supabase } from "../supabaseClient";
 
 export default function ResetPassword() {
   const [email, setEmail] = useState("");

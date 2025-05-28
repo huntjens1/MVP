@@ -1,10 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import supabase from "./supabaseClient";
+import { supabase } from "./supabaseClient";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL!;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY!;
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 type UserData = {
   id: string;
@@ -98,7 +94,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// Handige hook voor gebruik in componenten
 export function useAuth() {
   return useContext(AuthContext);
 }
