@@ -37,7 +37,7 @@ export default function AdminDashboard() {
     try {
       const res = await axios.post(`${apiBase}/api/register`, {
         email: inviteEmail,
-        password: Math.random().toString(36).slice(-10), // random wachtwoord, laat user resetten
+        password: Math.random().toString(36).slice(-10), // random wachtwoord
         tenant_id: inviteTenant,
         role: inviteRole,
       });
