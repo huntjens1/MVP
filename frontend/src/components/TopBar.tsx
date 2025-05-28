@@ -1,7 +1,7 @@
 import { useAuth } from "../AuthContext";
 
 export default function TopBar() {
-  const { user, role, signOut } = useAuth();
+  const { user, logout } = useAuth();
 
   if (!user) return null;
 
@@ -12,11 +12,11 @@ export default function TopBar() {
         <span className="flex items-center gap-2 px-4 py-2 rounded-2xl text-sm font-bold bg-calllogix-card text-calllogix-accent border border-calllogix-primary shadow">
           <span className="text-calllogix-primary text-lg">👤</span>
           {user.email}
-          <span className="ml-2 px-2 py-1 rounded-lg bg-calllogix-accent text-calllogix-dark text-xs capitalize font-bold border border-calllogix-accent/40">{role}</span>
+          <span className="ml-2 px-2 py-1 rounded-lg bg-calllogix-accent text-calllogix-dark text-xs capitalize font-bold border border-calllogix-accent/40">{user.role}</span>
         </span>
         <button
           className="px-3 py-2 rounded-xl font-bold bg-calllogix-primary text-calllogix-text hover:bg-calllogix-accent hover:text-calllogix-dark transition"
-          onClick={signOut}
+          onClick={logout}
         >
           Uitloggen
         </button>

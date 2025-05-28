@@ -7,7 +7,7 @@ const TABS = [
   { name: "Dashboard", icon: LayoutDashboard },
   { name: "Nieuwe opname", icon: Mic },
   { name: "Opname geschiedenis", icon: History },
-  // { name: "Gebruikersbeheer", icon: Users }, // optioneel
+  // { name: "Gebruikersbeheer", icon: Users },
 ];
 
 export default function AdminDashboard() {
@@ -51,7 +51,6 @@ export default function AdminDashboard() {
           </h1>
         </header>
 
-        {/* Content switch */}
         {tab === "Dashboard" && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             <div className="bg-white dark:bg-zinc-800 rounded-xl p-6 shadow flex flex-col items-center">
@@ -69,7 +68,6 @@ export default function AdminDashboard() {
               <div className="text-3xl font-bold">–</div>
               <div className="text-sm mt-2 text-zinc-500">Gebruikers</div>
             </div>
-            {/* Voeg meer cards toe indien nodig */}
           </div>
         )}
 
@@ -83,13 +81,6 @@ export default function AdminDashboard() {
             <div className="text-zinc-500">(Nog geen data gekoppeld)</div>
           </div>
         )}
-
-        {/* {tab === "Gebruikersbeheer" && (
-          <div className="bg-white dark:bg-zinc-800 rounded-xl p-8 shadow">
-            <h2 className="text-lg font-bold mb-4">Gebruikersbeheer</h2>
-            <div className="text-zinc-500">(Voor admins - optioneel later toevoegen)</div>
-          </div>
-        )} */}
       </main>
     </div>
   );

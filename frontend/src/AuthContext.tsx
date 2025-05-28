@@ -1,94 +1,83 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { supabase } from "./supabaseClient";
-import type { User as SupabaseUser } from "@supabase/supabase-js";
+import { createContext, useContext, useEffect, useState } from "react";
+import axios from "axios";
 
-type UserData = {
+type User = {
   id: string;
-  email: string | null;
+  email: string;
   role: string;
+  tenant_id: string;
 };
 
 type AuthContextType = {
-  user: UserData | null;
-  role: string;
-  signOut: () => Promise<void>;
+  user: User | null;
+  token: string | null;
   isLoading: boolean;
+  login: (email: string, password: string) => Promise<void>;
+  register: (email: string, password: string, tenant_id: string) => Promise<void>;
+  logout: () => void;
 };
 
-export const AuthContext = createContext<AuthContextType>({
+const AuthContext = createContext<AuthContextType>({
   user: null,
-  role: "",
-  signOut: async () => {},
+  token: null,
   isLoading: false,
+  login: async () => {},
+  register: async () => {},
+  logout: () => {},
 });
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<UserData | null>(null);
-  const [role, setRole] = useState<string>("");
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    let ignore = false;
-    async function checkSession() {
-      const { data } = await supabase.auth.getSession();
-      const session = data.session;
-      if (!ignore) {
-        if (session && session.user) {
-          fetchUserRole(session.user);
-        } else {
-          setUser(null);
-          setRole("");
-          setIsLoading(false);
-        }
-      }
+    const storedToken = localStorage.getItem("jwt");
+    const storedUser = localStorage.getItem("user");
+    if (storedToken && storedUser) {
+      setToken(storedToken);
+      setUser(JSON.parse(storedUser));
     }
-    checkSession();
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session && session.user) {
-        fetchUserRole(session.user);
-      } else {
-        setUser(null);
-        setRole("");
-      }
-      setIsLoading(false);
-    });
-    return () => {
-      ignore = true;
-      listener.subscription.unsubscribe();
-    };
-    // eslint-disable-next-line
+    setIsLoading(false);
   }, []);
 
-  async function fetchUserRole(user: SupabaseUser) {
-    setIsLoading(true);
-    const { data } = await supabase
-      .from("users")
-      .select("id, email, role")
-      .eq("id", user.id)
-      .single();
-    if (data) {
-      setUser({ id: data.id, email: data.email ?? null, role: data.role ?? "" });
-      setRole(data.role ?? "");
+  useEffect(() => {
+    if (token) {
+      localStorage.setItem("jwt", token);
     } else {
-      setUser({
-        id: user.id,
-        email: user.email ?? null,
-        role: "",
-      });
-      setRole("");
+      localStorage.removeItem("jwt");
     }
+    if (user) {
+      localStorage.setItem("user", JSON.stringify(user));
+    } else {
+      localStorage.removeItem("user");
+    }
+  }, [token, user]);
+
+  async function login(email: string, password: string) {
+    setIsLoading(true);
+    const res = await axios.post("/api/login", { email, password });
+    setToken(res.data.token);
+    setUser(res.data.user);
     setIsLoading(false);
   }
 
-  async function signOut() {
-    await supabase.auth.signOut();
+  async function register(email: string, password: string, tenant_id: string) {
+    setIsLoading(true);
+    const res = await axios.post("/api/register", { email, password, tenant_id });
+    setToken(res.data.token);
+    setUser(res.data.user);
+    setIsLoading(false);
+  }
+
+  function logout() {
+    setToken(null);
     setUser(null);
-    setRole("");
-    window.location.href = "/auth";
+    setIsLoading(false);
   }
 
   return (
-    <AuthContext.Provider value={{ user, role, signOut, isLoading }}>
+    <AuthContext.Provider value={{ user, token, isLoading, login, register, logout }}>
       {children}
     </AuthContext.Provider>
   );

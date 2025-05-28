@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react";
-import { supabase } from "../supabaseClient";
 import { Link, useNavigate } from "react-router-dom";
-import { useAuth } from "../AuthContext";
+import { useAuth } from "./AuthContext";
 
 export default function AuthPanel() {
-  const { isLoading, user } = useAuth();
+  const { isLoading, user, login, register } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [tenantId, setTenantId] = useState("");
   const [error, setError] = useState("");
   const [isRegister, setIsRegister] = useState(false);
   const navigate = useNavigate();
@@ -20,15 +20,22 @@ export default function AuthPanel() {
   async function handleSignIn(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) setError(error.message);
+    try {
+      await login(email, password);
+    } catch (err: any) {
+      setError(err.response?.data?.error || "Login mislukt");
+    }
   }
 
   async function handleSignUp(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    const { error } = await supabase.auth.signUp({ email, password });
-    if (error) setError(error.message);
+    if (!tenantId) return setError("Tenant ID verplicht");
+    try {
+      await register(email, password, tenantId);
+    } catch (err: any) {
+      setError(err.response?.data?.error || "Registratie mislukt");
+    }
   }
 
   return (
@@ -56,6 +63,16 @@ export default function AuthPanel() {
             onChange={e => setPassword(e.target.value)}
             autoComplete={isRegister ? "new-password" : "current-password"}
           />
+          {isRegister && (
+            <input
+              type="text"
+              required
+              placeholder="Tenant ID"
+              className="px-4 py-2 rounded-xl border border-calllogix-primary bg-calllogix-dark text-calllogix-text"
+              value={tenantId}
+              onChange={e => setTenantId(e.target.value)}
+            />
+          )}
           {error && <div className="text-red-500 font-bold">{error}</div>}
           <button
             type="submit"
