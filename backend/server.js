@@ -19,12 +19,17 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-app.use(express.static('public'));
-app.use(cors());
-app.use(authRouter);
+// **DIT MOET ALTIJD VOOR JE ROUTERS**
 app.use(express.json());
-
-// === SUGGESTION ROUTER NA DE INITIALISATIE! ===
+app.use(cors({
+  origin: [
+    "https://mvp-zeta-rose.vercel.app",
+    "http://localhost:5173"
+  ],
+  credentials: true
+}));
+app.use(express.static('public'));
+app.use(authRouter);
 app.use(suggestQuestionRouter);
 
 // === Health endpoint ===
