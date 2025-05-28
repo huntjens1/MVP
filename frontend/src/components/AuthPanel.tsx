@@ -1,21 +1,27 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { supabase } from "../supabaseClient";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 
 export default function AuthPanel() {
-  const { isLoading } = useAuth();
+  const { isLoading, user } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isRegister, setIsRegister] = useState(false);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!isLoading && user) {
+      navigate("/app", { replace: true });
+    }
+  }, [isLoading, user, navigate]);
 
   async function handleSignIn(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) setError(error.message);
-    else window.location.href = "/app";
   }
 
   async function handleSignUp(e: React.FormEvent) {
@@ -23,7 +29,6 @@ export default function AuthPanel() {
     setError("");
     const { error } = await supabase.auth.signUp({ email, password });
     if (error) setError(error.message);
-    else window.location.href = "/app";
   }
 
   return (
@@ -40,6 +45,7 @@ export default function AuthPanel() {
             className="px-4 py-2 rounded-xl border border-calllogix-primary bg-calllogix-dark text-calllogix-text"
             value={email}
             onChange={e => setEmail(e.target.value)}
+            autoComplete="username"
           />
           <input
             type="password"
@@ -48,11 +54,13 @@ export default function AuthPanel() {
             className="px-4 py-2 rounded-xl border border-calllogix-primary bg-calllogix-dark text-calllogix-text"
             value={password}
             onChange={e => setPassword(e.target.value)}
+            autoComplete={isRegister ? "new-password" : "current-password"}
           />
           {error && <div className="text-red-500 font-bold">{error}</div>}
           <button
             type="submit"
             className="bg-calllogix-primary text-calllogix-text font-bold px-4 py-2 rounded-xl hover:bg-calllogix-accent hover:text-calllogix-dark transition"
+            disabled={isLoading}
           >
             {isRegister ? "Account aanmaken" : "Inloggen"}
           </button>
