@@ -9,6 +9,7 @@ function generateJwt(payload) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 }
 
+// Login endpoint
 export async function login(req, res) {
   try {
     const { email, password } = req.body;
@@ -53,6 +54,55 @@ export async function login(req, res) {
     res.json({ token, user: { id: user.id, email: user.email, tenant_id: user.tenant_id, role: user.role } });
   } catch (err) {
     console.log("Login error:", err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+// Superadmin-only invite endpoint
+export async function inviteUser(req, res) {
+  try {
+    const { email, password, tenant_id, role } = req.body;
+
+    if (!email || !password || !tenant_id || !role) {
+      return res.status(400).json({ error: "Missing fields" });
+    }
+
+    const emailLower = email.trim().toLowerCase();
+
+    // Check of user al bestaat
+    const { data: existing } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', emailLower)
+      .eq('tenant_id', tenant_id)
+      .single();
+    if (existing) {
+      return res.status(409).json({ error: 'Gebruiker bestaat al' });
+    }
+
+    // Genereer bcrypt hash
+    const salt = await bcrypt.genSalt(12);
+    const passwordHash = await bcrypt.hash(password, salt);
+
+    // Voeg toe aan users-tabel
+    const { data: user, error } = await supabase
+      .from('users')
+      .insert([
+        {
+          email: emailLower,
+          password_hash: passwordHash,
+          tenant_id,
+          role,
+        },
+      ])
+      .select('id, email, tenant_id, role')
+      .single();
+
+    if (error) return res.status(500).json({ error: 'Toevoegen mislukt' });
+
+    // (Optioneel: stuur hier een e-mail met het wachtwoord!)
+    return res.status(201).json({ message: 'Gebruiker aangemaakt', user });
+  } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
   }
 }

@@ -30,27 +30,28 @@ export default function AdminDashboard() {
   const isSuperAdmin = user?.role === "superadmin";
 
   async function handleInvite(e: React.FormEvent) {
-    e.preventDefault();
-    setInviteMsg("");
-    setInviteError("");
-    setLoading(true);
-    try {
-      const res = await axios.post(`${apiBase}/api/register`, {
-        email: inviteEmail,
-        password: Math.random().toString(36).slice(-10), // random wachtwoord
-        tenant_id: inviteTenant,
-        role: inviteRole,
-      });
-      setInviteMsg(`Gebruiker uitgenodigd (${inviteEmail})`);
-      setInviteEmail("");
-      setInviteRole("user");
-      setInviteTenant("");
-    } catch (err: any) {
-      setInviteError(err.response?.data?.error || "Fout bij uitnodigen gebruiker.");
-    } finally {
-      setLoading(false);
-    }
+  e.preventDefault();
+  setInviteMsg("");
+  setInviteError("");
+  setLoading(true);
+  try {
+    await axios.post(`${apiBase}/api/invite-user`, {
+      email: inviteEmail,
+      password: Math.random().toString(36).slice(-10),
+      tenant_id: inviteTenant,
+      role: inviteRole,
+    });
+    setInviteMsg(`Gebruiker uitgenodigd (${inviteEmail})`);
+    setInviteEmail("");
+    setInviteRole("user");
+    setInviteTenant("");
+  } catch (err: any) {
+    setInviteError(err.response?.data?.error || "Fout bij uitnodigen gebruiker.");
+  } finally {
+    setLoading(false);
   }
+}
+
 
   return (
     <div className="flex min-h-screen bg-zinc-50 dark:bg-zinc-900 relative">
