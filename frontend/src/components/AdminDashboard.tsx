@@ -7,7 +7,7 @@ const apiBase = import.meta.env.VITE_API_BASE || "";
 
 export default function AdminDashboard() {
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState("user");
+  const [inviteRole, setInviteRole] = useState("support"); // default geldige rol!
   const [inviteTenant, setInviteTenant] = useState("");
   const [inviteMsg, setInviteMsg] = useState("");
   const [inviteError, setInviteError] = useState("");
@@ -19,7 +19,7 @@ export default function AdminDashboard() {
   const { user } = useAuth();
   const isSuperAdmin = user?.role === "superadmin";
 
-  // Tenants ophalen
+  // Haal tenants op
   useEffect(() => {
     async function fetchTenants() {
       try {
@@ -48,17 +48,23 @@ export default function AdminDashboard() {
       });
       setInviteMsg(`Gebruiker uitgenodigd (${inviteEmail})`);
       setInviteEmail("");
-      setInviteRole("user");
+      setInviteRole("support");
       setInviteTenant("");
     } catch (err: any) {
-      setInviteError(err.response?.data?.error || "Toevoegen mislukt");
+      setInviteError(
+        err.response?.data?.error || err.message || "Toevoegen mislukt"
+      );
     } finally {
       setLoading(false);
     }
   }
 
   if (!isSuperAdmin) {
-    return <div className="p-10 text-center text-red-500 font-bold">Alleen voor superadmin toegankelijk.</div>;
+    return (
+      <div className="p-10 text-center text-red-500 font-bold">
+        Alleen voor superadmin toegankelijk.
+      </div>
+    );
   }
 
   return (
@@ -94,8 +100,9 @@ export default function AdminDashboard() {
           value={inviteRole}
           onChange={e => setInviteRole(e.target.value)}
         >
-          <option value="user">User</option>
-          <option value="admin">Admin</option>
+          <option value="support">Support</option>
+          <option value="coordinator">Coordinator</option>
+          <option value="manager">Manager</option>
           <option value="superadmin">Superadmin</option>
         </select>
         <button
