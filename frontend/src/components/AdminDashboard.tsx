@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { PlusCircle } from "lucide-react";
 import { useAuth } from "../AuthContext";
 import axios from "axios";
@@ -12,8 +12,27 @@ export default function AdminDashboard() {
   const [inviteMsg, setInviteMsg] = useState("");
   const [inviteError, setInviteError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  const [tenants, setTenants] = useState<{ id: string, name: string }[]>([]);
+  const [tenantsLoading, setTenantsLoading] = useState(true);
+
   const { user } = useAuth();
   const isSuperAdmin = user?.role === "superadmin";
+
+  // Tenants ophalen
+  useEffect(() => {
+    async function fetchTenants() {
+      try {
+        const res = await axios.get(`${apiBase}/api/tenants`);
+        setTenants(res.data.tenants);
+      } catch {
+        setTenants([]);
+      } finally {
+        setTenantsLoading(false);
+      }
+    }
+    fetchTenants();
+  }, []);
 
   async function handleInvite(e: React.FormEvent) {
     e.preventDefault();
@@ -32,7 +51,7 @@ export default function AdminDashboard() {
       setInviteRole("user");
       setInviteTenant("");
     } catch (err: any) {
-      setInviteError(err.response?.data?.error || "Fout bij uitnodigen gebruiker.");
+      setInviteError(err.response?.data?.error || "Toevoegen mislukt");
     } finally {
       setLoading(false);
     }
@@ -56,14 +75,20 @@ export default function AdminDashboard() {
           value={inviteEmail}
           onChange={e => setInviteEmail(e.target.value)}
         />
-        <input
-          type="text"
-          required
-          placeholder="Tenant ID"
+        <select
           className="px-4 py-2 rounded-xl border border-blue-300 bg-zinc-100 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+          required
           value={inviteTenant}
           onChange={e => setInviteTenant(e.target.value)}
-        />
+          disabled={tenantsLoading}
+        >
+          <option value="">Kies een tenant...</option>
+          {tenants.map(tenant => (
+            <option key={tenant.id} value={tenant.id}>
+              {tenant.name} ({tenant.id.slice(0, 8)}…)
+            </option>
+          ))}
+        </select>
         <select
           className="px-4 py-2 rounded-xl border border-blue-300 bg-zinc-100 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
           value={inviteRole}
