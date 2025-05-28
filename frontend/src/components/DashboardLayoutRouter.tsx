@@ -1,26 +1,23 @@
+import { useLocation, useNavigate, Outlet } from "react-router-dom";
 import DashboardLayout from "./DashboardLayout";
-import { Outlet, useLocation, useNavigate } from "react-router-dom";
 
 const TAB_MAP: Record<string, string> = {
   "/app": "Dashboard",
   "/app/transcriptie": "Nieuwe opname",
   "/app/geschiedenis": "Opname geschiedenis",
+  "/app/admin": "Gebruikersbeheer",
 };
 
 export default function DashboardLayoutRouter() {
   const location = useLocation();
   const navigate = useNavigate();
-
-  // Haal actieve tab uit url path
-  const base = location.pathname.startsWith("/app/") && location.pathname !== "/app"
-    ? `/app/${location.pathname.split("/")[2] || ""}`.replace(/\/$/, "")
-    : location.pathname;
-  const activeTab = TAB_MAP[base] || "Dashboard";
+  const activeTab = TAB_MAP[location.pathname] || "Dashboard";
 
   function setTab(tab: string) {
     if (tab === "Dashboard") navigate("/app");
     else if (tab === "Nieuwe opname") navigate("/app/transcriptie");
     else if (tab === "Opname geschiedenis") navigate("/app/geschiedenis");
+    else if (tab === "Gebruikersbeheer") navigate("/app/admin");
   }
 
   return (
