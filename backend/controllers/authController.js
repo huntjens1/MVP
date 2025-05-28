@@ -9,47 +9,50 @@ function generateJwt(payload) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 }
 
-export async function register(req, res) {
-  const { email, password, tenant_id } = req.body;
-  if (!email || !password || !tenant_id) return res.status(400).json({ error: 'Missing fields' });
-
-  const emailLower = email.trim().toLowerCase();
-  const { data: existing } = await supabase
-    .from('users')
-    .select('id')
-    .eq('email', emailLower)
-    .single();
-  if (existing) return res.status(409).json({ error: 'Email already registered' });
-
-  const salt = await bcrypt.genSalt(12);
-  const passwordHash = await bcrypt.hash(password, salt);
-
-  const { data: user, error } = await supabase
-    .from('users')
-    .insert([{ email: emailLower, password_hash: passwordHash, tenant_id, role: 'user' }])
-    .select('id, email, tenant_id, role')
-    .single();
-  if (error) return res.status(500).json({ error: 'Registration failed' });
-
-  const token = generateJwt({ id: user.id, email: user.email, role: user.role, tenant_id: user.tenant_id });
-  res.status(201).json({ token, user });
-}
-
 export async function login(req, res) {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: 'Missing fields' });
+  try {
+    const { email, password } = req.body;
+    const emailLower = email.trim().toLowerCase();
 
-  const emailLower = email.trim().toLowerCase();
-  const { data: user } = await supabase
-    .from('users')
-    .select('id, email, password_hash, tenant_id, role')
-    .eq('email', emailLower)
-    .single();
-  if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+    // --- DEBUG LOGGING ---
+    console.log("=== LOGIN ATTEMPT ===");
+    console.log("Frontend email:", email);
+    console.log("Lowercased:", emailLower);
 
-  const isMatch = await bcrypt.compare(password, user.password_hash);
-  if (!isMatch) return res.status(401).json({ error: 'Invalid credentials' });
+    // Zoek user in db
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('id, email, password_hash, tenant_id, role')
+      .eq('email', emailLower)
+      .single();
 
-  const token = generateJwt({ id: user.id, email: user.email, role: user.role, tenant_id: user.tenant_id });
-  res.json({ token, user: { id: user.id, email: user.email, tenant_id: user.tenant_id, role: user.role } });
+    // --- DEBUG LOGGING ---
+    console.log("User found in db:", user);
+    if (error) console.log("DB error:", error);
+
+    if (!user) {
+      console.log("User not found in db!");
+      return res.status(401).json({ error: 'Invalid credentials (not found)' });
+    }
+    if (!user.password_hash) {
+      console.log("User gevonden, maar geen password_hash!");
+      return res.status(401).json({ error: 'Invalid credentials (geen hash)' });
+    }
+    // bcrypt vergelijking
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+    console.log("Wachtwoord uit frontend:", password);
+    console.log("Hash uit db:", user.password_hash);
+    console.log("bcrypt.match:", isMatch);
+
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Invalid credentials (hash mismatch)' });
+    }
+
+    const token = generateJwt({ id: user.id, email: user.email, role: user.role, tenant_id: user.tenant_id });
+    console.log("=== LOGIN SUCCESS === User:", user.email);
+    res.json({ token, user: { id: user.id, email: user.email, tenant_id: user.tenant_id, role: user.role } });
+  } catch (err) {
+    console.log("Login error:", err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 }
