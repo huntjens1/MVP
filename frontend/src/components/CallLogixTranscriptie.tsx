@@ -199,7 +199,6 @@ export default function CallLogixTranscriptie() {
               );
             })()}
           </div>
-          {/* Start/Stop buttons netjes onderaan */}
           <div className="flex gap-3 mt-6 justify-center">
             <button
               className={`px-5 py-2 rounded-xl font-bold transition shadow ${
@@ -228,7 +227,6 @@ export default function CallLogixTranscriptie() {
             {recording ? "Opname loopt..." : "Klik op Start om te beginnen"}
           </div>
         </section>
-        {/* Suggesties panel */}
         <aside className="w-full sm:w-80 bg-calllogix-card rounded-3xl p-8 border border-calllogix-accent/40 shadow-2xl flex flex-col">
           <h3 className="text-xl font-bold mb-6 text-calllogix-accent drop-shadow">
             AI Vraagsuggesties

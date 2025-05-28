@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import axios from "axios";
 
+const apiBase = import.meta.env.VITE_API_BASE || "";
+
 type User = {
   id: string;
   email: string;
@@ -56,7 +58,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   async function login(email: string, password: string) {
     setIsLoading(true);
-    const res = await axios.post("/api/login", { email, password });
+    const res = await axios.post(`${apiBase}/api/login`, { email, password });
     setToken(res.data.token);
     setUser(res.data.user);
     setIsLoading(false);
@@ -64,7 +66,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   async function register(email: string, password: string, tenant_id: string) {
     setIsLoading(true);
-    const res = await axios.post("/api/register", { email, password, tenant_id });
+    const res = await axios.post(`${apiBase}/api/register`, { email, password, tenant_id });
     setToken(res.data.token);
     setUser(res.data.user);
     setIsLoading(false);

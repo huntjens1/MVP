@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { AuthProvider } from "./AuthContext";
 import axios from "axios";
+import "./index.css";
 
 // Axios interceptor: JWT automatisch meesturen bij elke API-call
 axios.interceptors.request.use(config => {
