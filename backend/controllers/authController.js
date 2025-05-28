@@ -1,9 +1,11 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { supabase } from '../supabaseClient.js';
+import { Resend } from 'resend';
 
 const JWT_SECRET = process.env.JWT_SECRET || "change_this";
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "15m";
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 function generateJwt(payload) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
@@ -58,7 +60,7 @@ export async function login(req, res) {
   }
 }
 
-// Superadmin-only invite endpoint
+// Gebruiker uitnodigen met mail via Resend
 export async function inviteUser(req, res) {
   try {
     const { email, password, tenant_id, role } = req.body;
@@ -100,9 +102,39 @@ export async function inviteUser(req, res) {
 
     if (error) return res.status(500).json({ error: 'Toevoegen mislukt' });
 
-    // (Optioneel: stuur hier een e-mail met het wachtwoord!)
-    return res.status(201).json({ message: 'Gebruiker aangemaakt', user });
+    // Verstuur invite e-mail met Resend
+    try {
+      await resend.emails.send({
+        from: process.env.RESEND_FROM || 'noreply@resend.dev',
+        to: [emailLower],
+        subject: "Uitnodiging voor CallLogix",
+        text: `Hallo,
+
+Je bent uitgenodigd voor CallLogix. Je kunt nu inloggen op https://calllogix.nl/auth
+
+Inloggegevens:
+E-mail: ${emailLower}
+Tijdelijk wachtwoord: ${password}
+
+Je wordt gevraagd het wachtwoord te wijzigen na inloggen.
+
+Met vriendelijke groet,
+Het CallLogix team
+        `,
+      });
+    } catch (mailErr) {
+      // User wordt toegevoegd, maar mailen is mislukt:
+      console.error("Resend mail error:", mailErr);
+      return res.status(201).json({
+        message: 'Gebruiker aangemaakt, maar versturen e-mail is mislukt.',
+        user,
+        mailError: mailErr.message,
+      });
+    }
+
+    return res.status(201).json({ message: 'Gebruiker aangemaakt en invite verzonden', user });
   } catch (err) {
-    res.status(500).json({ error: 'Internal server error' });
+    console.error("[inviteUser] Internal server error:", err);
+    res.status(500).json({ error: 'Internal server error', details: err.message || err });
   }
 }
