@@ -5,6 +5,7 @@ import fetch from 'node-fetch'; // npm install node-fetch
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
 import suggestQuestionRouter from './routes/suggestQuestion.js';
+import authRouter from './routes/auth.js';
 
 dotenv.config();
 
@@ -20,6 +21,7 @@ const supabase = createClient(
 
 app.use(express.static('public'));
 app.use(cors());
+app.use(authRouter);
 app.use(express.json());
 
 // === SUGGESTION ROUTER NA DE INITIALISATIE! ===
