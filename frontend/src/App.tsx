@@ -7,7 +7,7 @@ import AdminDashboard from "./components/AdminDashboard";
 import CallLogixTranscriptie from "./components/CallLogixTranscriptie";
 import OpnameGeschiedenis from "./components/OpnameGeschiedenis";
 import DashboardHome from "./components/DashboardHome";
-import Analytics from "./pages/Analytics";
+import Analytics from "./components/Analytics";
 
 export default function App() {
   return (
