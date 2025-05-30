@@ -1,5 +1,6 @@
 import express from 'express';
 import OpenAI from "openai";
+import { v4 as uuidv4 } from "uuid";
 
 const router = express.Router();
 
@@ -37,7 +38,8 @@ ${transcript}
     const suggestions = text
       .split("\n")
       .map(l => l.replace(/^[-•]\s*/, "").trim())
-      .filter(l => l.length > 4);
+      .filter(l => l.length > 4)
+      .map(text => ({ id: uuidv4(), text }));
 
     return res.json({ suggestions });
   } catch (err) {

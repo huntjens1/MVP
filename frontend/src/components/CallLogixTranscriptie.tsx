@@ -1,15 +1,67 @@
 import { useRef, useState } from "react";
+import axios from "axios";
 
 const apiBase = import.meta.env.VITE_API_BASE || "";
+
+// 👇 Feedback-component binnenin dit bestand voor maximale compatibiliteit
+function SuggestionFeedback({
+  suggestion,
+  conversationId,
+  userId,
+}: {
+  suggestion: { id: string; text: string };
+  conversationId: string;
+  userId: string;
+}) {
+  const [feedback, setFeedback] = useState<string | null>(null);
+
+  async function sendFeedback(rating: "good" | "bad") {
+    setFeedback(rating);
+    try {
+      await axios.post(`${apiBase}/api/ai-feedback`, {
+        suggestion_id: suggestion.id,
+        conversation_id: conversationId,
+        user_id: userId,
+        feedback: rating,
+      });
+    } catch {
+      alert("Feedback opslaan mislukt!");
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-3 my-1">
+      <span className="flex-1">{suggestion.text}</span>
+      <button
+        className={`px-2 py-1 rounded-lg ${feedback === "good" ? "bg-green-600 text-white" : "bg-gray-200"}`}
+        onClick={() => sendFeedback("good")}
+        disabled={!!feedback}
+      >
+        👍 Goed
+      </button>
+      <button
+        className={`px-2 py-1 rounded-lg ${feedback === "bad" ? "bg-red-600 text-white" : "bg-gray-200"}`}
+        onClick={() => sendFeedback("bad")}
+        disabled={!!feedback}
+      >
+        👎 Niet bruikbaar
+      </button>
+      {feedback && <span className="text-green-600 ml-3">Feedback ontvangen!</span>}
+    </div>
+  );
+}
 
 export default function CallLogixTranscriptie() {
   const [recording, setRecording] = useState(false);
   const [transcript, setTranscript] = useState<string[]>([]);
   const [interim, setInterim] = useState("");
-  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [suggestions, setSuggestions] = useState<{ id: string; text: string }[]>([]);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const lastSuggestionSentRef = useRef("");
+  // Implementeer dit met je echte gebruiker/conversatie-data!
+  const [conversationId] = useState(() => crypto.randomUUID());
+  const userId = localStorage.getItem("userId") || "test-user-1";
 
   function speakerLabel(speaker: number) {
     return speaker === 0 ? "Agent" : "Gebruiker";
@@ -32,7 +84,7 @@ export default function CallLogixTranscriptie() {
         body: JSON.stringify({ transcript: currentTranscript }),
       });
       const data = await resp.json();
-      if (data.suggestions) setSuggestions(data.suggestions);
+      if (data.suggestions) setSuggestions(data.suggestions); // <-- expects array of {id, text}
     } catch {}
   }
 
@@ -235,12 +287,16 @@ export default function CallLogixTranscriptie() {
             {suggestions.length === 0 && (
               <li className="opacity-40">Nog geen suggesties...</li>
             )}
-            {suggestions.map((s, i) => (
+            {suggestions.map((suggestion) => (
               <li
-                key={i}
+                key={suggestion.id}
                 className="bg-calllogix-dark text-calllogix-accent rounded-2xl p-4 border border-calllogix-primary/30 shadow"
               >
-                <span className="font-medium">{s}</span>
+                <SuggestionFeedback
+                  suggestion={suggestion}
+                  conversationId={conversationId}
+                  userId={userId}
+                />
               </li>
             ))}
           </ul>

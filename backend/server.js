@@ -6,6 +6,7 @@ import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
 import suggestQuestionRouter from './routes/suggestQuestion.js';
 import authRouter from './routes/auth.js';
+import aiFeedbackRouter from './routes/aiFeedback.js';
 
 dotenv.config();
 
@@ -31,6 +32,7 @@ app.use(cors({
 app.use(express.static('public'));
 app.use(authRouter);
 app.use(suggestQuestionRouter);
+app.use(aiFeedbackRouter);
 
 // === Health endpoint ===
 app.get('/api/health', (req, res) => {
