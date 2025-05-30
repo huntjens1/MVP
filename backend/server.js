@@ -7,7 +7,7 @@ import crypto from 'crypto';
 import suggestQuestionRouter from './routes/suggestQuestion.js';
 import authRouter from './routes/auth.js';
 import aiFeedbackRouter from './routes/aiFeedback.js';
-import summarizeRoute from "./routes/summarize.js";
+import summarizeRoute from "./routes/summarize.js"; // <-- Samenvatten
 import analyticsRouter from './routes/analytics.js';
 
 dotenv.config();
@@ -15,8 +15,6 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 const DG_API_KEY = process.env.DEEPGRAM_API_KEY;
-
-
 
 // Supabase client (gebruik altijd service role key in backend)
 const supabase = createClient(
@@ -37,7 +35,7 @@ app.use(express.static('public'));
 app.use(authRouter);
 app.use(suggestQuestionRouter);
 app.use(aiFeedbackRouter);
-app.use(summarizeRoute);
+app.use(summarizeRoute); // <-- Samenvatten
 app.use(analyticsRouter);
 
 // === Health endpoint ===
