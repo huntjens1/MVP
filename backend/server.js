@@ -8,6 +8,7 @@ import suggestQuestionRouter from './routes/suggestQuestion.js';
 import authRouter from './routes/auth.js';
 import aiFeedbackRouter from './routes/aiFeedback.js';
 import summarizeRoute from "./routes/summarize.js";
+import analyticsRouter from './routes/analytics.js';
 
 dotenv.config();
 
@@ -37,6 +38,7 @@ app.use(authRouter);
 app.use(suggestQuestionRouter);
 app.use(aiFeedbackRouter);
 app.use(summarizeRoute);
+app.use(analyticsRouter);
 
 // === Health endpoint ===
 app.get('/api/health', (req, res) => {

@@ -7,6 +7,7 @@ import AdminDashboard from "./components/AdminDashboard";
 import CallLogixTranscriptie from "./components/CallLogixTranscriptie";
 import OpnameGeschiedenis from "./components/OpnameGeschiedenis";
 import DashboardHome from "./components/DashboardHome";
+import Analytics from "./pages/Analytics";
 
 export default function App() {
   return (
@@ -28,6 +29,7 @@ export default function App() {
           <Route path="transcriptie" element={<CallLogixTranscriptie />} />
           <Route path="geschiedenis" element={<OpnameGeschiedenis />} />
           <Route path="admin" element={<AdminDashboard />} />
+          <Route path="/app/analytics" element={<Analytics />} /> 
         </Route>
       </Routes>
     </BrowserRouter>
