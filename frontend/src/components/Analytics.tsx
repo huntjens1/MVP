@@ -6,11 +6,10 @@ import { Navigate } from "react-router-dom";
 export default function Analytics() {
   const { user } = useAuth();
   const [summary, setSummary] = useState<
-    { suggestion_id: string; thumbs_up: number; thumbs_down: number }[]
+    { suggestion_id: string; suggestion_text: string; thumbs_up: number; thumbs_down: number }[]
   >([]);
   const [loading, setLoading] = useState(true);
 
-  // Role check: alleen superadmin/manager mag deze pagina zien!
   if (!user || !["superadmin", "manager"].includes(user.role)) {
     return <Navigate to="/app" />;
   }
@@ -42,7 +41,7 @@ export default function Analytics() {
         <table className="w-full text-left border mt-4">
           <thead>
             <tr>
-              <th className="border-b px-4 py-2">Suggestion ID</th>
+              <th className="border-b px-4 py-2">Suggestie</th>
               <th className="border-b px-4 py-2">👍</th>
               <th className="border-b px-4 py-2">👎</th>
             </tr>
@@ -52,7 +51,7 @@ export default function Analytics() {
               .sort((a, b) => b.thumbs_up - a.thumbs_up)
               .map((row) => (
                 <tr key={row.suggestion_id}>
-                  <td className="border-b px-4 py-2 font-mono text-xs">{row.suggestion_id}</td>
+                  <td className="border-b px-4 py-2">{row.suggestion_text}</td>
                   <td className="border-b px-4 py-2">{row.thumbs_up}</td>
                   <td className="border-b px-4 py-2">{row.thumbs_down}</td>
                 </tr>

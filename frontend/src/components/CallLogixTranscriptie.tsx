@@ -1,10 +1,10 @@
 import { useRef, useState } from "react";
 import axios from "axios";
-import { useAuth } from "../AuthContext"; // <--- Correct importeren!
+import { useAuth } from "../AuthContext";
 
 const apiBase = import.meta.env.VITE_API_BASE || "";
 
-// 👇 Feedback-component binnenin dit bestand voor maximale compatibiliteit
+// 👇 SuggestionFeedback-component stuurt nu ook de tekst mee
 function SuggestionFeedback({
   suggestion,
   conversationId,
@@ -21,6 +21,7 @@ function SuggestionFeedback({
     try {
       await axios.post(`${apiBase}/api/ai-feedback`, {
         suggestion_id: suggestion.id,
+        suggestion_text: suggestion.text, // <-- tekst nu meegeven!
         conversation_id: conversationId,
         user_id: userId,
         feedback: rating,
@@ -60,10 +61,9 @@ export default function CallLogixTranscriptie() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const lastSuggestionSentRef = useRef("");
-  // Implementeer dit met je echte gebruiker/conversatie-data!
   const [conversationId] = useState(() => crypto.randomUUID());
-  const { user } = useAuth(); // <-- Automatische user-id ophalen!
-  const userId = user?.id;    // <-- Supabase uuid, gegarandeerd uniek
+  const { user } = useAuth();
+  const userId = user?.id;
 
   function speakerLabel(speaker: number) {
     return speaker === 0 ? "Agent" : "Gebruiker";
@@ -86,7 +86,7 @@ export default function CallLogixTranscriptie() {
         body: JSON.stringify({ transcript: currentTranscript }),
       });
       const data = await resp.json();
-      if (data.suggestions) setSuggestions(data.suggestions); // <-- expects array of {id, text}
+      if (data.suggestions) setSuggestions(data.suggestions); // [{id, text}]
     } catch {}
   }
 
