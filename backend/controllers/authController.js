@@ -8,6 +8,53 @@ const JWT_SECRET = process.env.JWT_SECRET || "change_this";
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "15m";
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
+// =================== LOGIN ===================
+export async function login(req, res) {
+  try {
+    const { email, password } = req.body;
+    const emailLower = email.trim().toLowerCase();
+
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('id, email, password_hash, tenant_id, role')
+      .eq('email', emailLower)
+      .single();
+
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid credentials (not found)' });
+    }
+    if (!user.password_hash) {
+      return res.status(401).json({ error: 'Invalid credentials (geen hash)' });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Invalid credentials (hash mismatch)' });
+    }
+
+    const token = jwt.sign({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      tenant_id: user.tenant_id
+    }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        tenant_id: user.tenant_id,
+        role: user.role
+      }
+    });
+  } catch (err) {
+    console.error("LOGIN ERROR:", err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+// =================== INVITE USER ===================
 export async function inviteUser(req, res) {
   try {
     const { email, tenant_id, role } = req.body;
@@ -63,7 +110,50 @@ export async function inviteUser(req, res) {
 
     return res.status(201).json({ message: "Gebruiker uitgenodigd", user });
   } catch (err) {
-    console.error("INVITE ERROR:", err);  // <-- Dit logt alle errors!
+    console.error("INVITE ERROR:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+}
+
+// =================== SET PASSWORD ===================
+export async function setPassword(req, res) {
+  try {
+    const { email, token, password } = req.body;
+    const now = new Date();
+
+    // Zoek user met correcte invite_token
+    const { data: user, error } = await supabase
+      .from("users")
+      .select("id, invite_token, invite_expires")
+      .eq("email", email.trim().toLowerCase())
+      .eq("invite_token", token)
+      .single();
+
+    if (!user || !user.invite_expires || new Date(user.invite_expires) < now) {
+      return res.status(400).json({ error: "Invite-token ongeldig of verlopen." });
+    }
+
+    // Hash wachtwoord
+    const salt = await bcrypt.genSalt(12);
+    const passwordHash = await bcrypt.hash(password, salt);
+
+    // Update user: wachtwoord instellen, invite_token wissen
+    const { error: updateError } = await supabase
+      .from("users")
+      .update({
+        password_hash: passwordHash,
+        invite_token: null,
+        invite_expires: null,
+      })
+      .eq("id", user.id);
+
+    if (updateError) {
+      return res.status(500).json({ error: "Wachtwoord opslaan mislukt" });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("SET PASSWORD ERROR:", err);
     res.status(500).json({ error: "Internal server error" });
   }
 }
