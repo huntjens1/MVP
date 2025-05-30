@@ -13,11 +13,18 @@ export const transporter = nodemailer.createTransport({
 });
 
 export async function sendMail({ to, subject, html, text }) {
-  return transporter.sendMail({
-    from: process.env.MAIL_FROM,
-    to,
-    subject,
-    html,
-    text,
-  });
+  try {
+    const info = await transporter.sendMail({
+      from: process.env.MAIL_FROM, // bijv. noreply@invite.calllogix.nl
+      to,
+      subject,
+      html,
+      text,
+    });
+    console.log("MAIL SENT:", info);
+    return info;
+  } catch (e) {
+    console.error("MAIL ERROR:", e);  // <-- Dit logt de SMTP/mailer error naar Railway!
+    throw e;  // gooi door zodat inviteUser hem ziet
+  }
 }
