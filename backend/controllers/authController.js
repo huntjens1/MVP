@@ -1,26 +1,23 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { supabase } from '../supabaseClient.js';
-import { Resend } from 'resend';
+import { sendMail } from '../utils/mailer.js';
+import crypto from 'crypto';
 
 const JWT_SECRET = process.env.JWT_SECRET || "change_this";
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "15m";
-const resend = new Resend(process.env.RESEND_API_KEY);
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
+// ========== JWT GENERATOR ==========
 function generateJwt(payload) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 }
 
-// Login endpoint
+// ========== LOGIN ENDPOINT ==========
 export async function login(req, res) {
   try {
     const { email, password } = req.body;
     const emailLower = email.trim().toLowerCase();
-
-    // --- DEBUG LOGGING ---
-    console.log("=== LOGIN ATTEMPT ===");
-    console.log("Frontend email:", email);
-    console.log("Lowercased:", emailLower);
 
     // Zoek user in db
     const { data: user, error } = await supabase
@@ -29,47 +26,52 @@ export async function login(req, res) {
       .eq('email', emailLower)
       .single();
 
-    // --- DEBUG LOGGING ---
-    console.log("User found in db:", user);
-    if (error) console.log("DB error:", error);
-
     if (!user) {
-      console.log("User not found in db!");
       return res.status(401).json({ error: 'Invalid credentials (not found)' });
     }
     if (!user.password_hash) {
-      console.log("User gevonden, maar geen password_hash!");
       return res.status(401).json({ error: 'Invalid credentials (geen hash)' });
     }
+
     // bcrypt vergelijking
     const isMatch = await bcrypt.compare(password, user.password_hash);
-    console.log("Wachtwoord uit frontend:", password);
-    console.log("Hash uit db:", user.password_hash);
-    console.log("bcrypt.match:", isMatch);
-
     if (!isMatch) {
       return res.status(401).json({ error: 'Invalid credentials (hash mismatch)' });
     }
 
-    const token = generateJwt({ id: user.id, email: user.email, role: user.role, tenant_id: user.tenant_id });
-    console.log("=== LOGIN SUCCESS === User:", user.email);
-    res.json({ token, user: { id: user.id, email: user.email, tenant_id: user.tenant_id, role: user.role } });
+    const token = generateJwt({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      tenant_id: user.tenant_id
+    });
+
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        tenant_id: user.tenant_id,
+        role: user.role
+      }
+    });
   } catch (err) {
-    console.log("Login error:", err);
     res.status(500).json({ error: 'Internal server error' });
   }
 }
 
-// Gebruiker uitnodigen met mail via Resend
+// ========== INVITE-USER ENDPOINT (SUPERADMIN) ==========
 export async function inviteUser(req, res) {
   try {
-    const { email, password, tenant_id, role } = req.body;
+    const { email, tenant_id, role } = req.body;
 
-    if (!email || !password || !tenant_id || !role) {
+    if (!email || !tenant_id || !role) {
       return res.status(400).json({ error: "Missing fields" });
     }
 
     const emailLower = email.trim().toLowerCase();
+    const inviteToken = crypto.randomBytes(32).toString("hex");
+    const inviteExpires = new Date(Date.now() + 1000 * 60 * 60 * 24); // 24 uur geldig
 
     // Check of user al bestaat
     const { data: existing } = await supabase
@@ -82,59 +84,80 @@ export async function inviteUser(req, res) {
       return res.status(409).json({ error: 'Gebruiker bestaat al' });
     }
 
-    // Genereer bcrypt hash
-    const salt = await bcrypt.genSalt(12);
-    const passwordHash = await bcrypt.hash(password, salt);
-
-    // Voeg toe aan users-tabel
+    // Voeg user toe met invite_token
     const { data: user, error } = await supabase
       .from('users')
       .insert([
         {
           email: emailLower,
-          password_hash: passwordHash,
           tenant_id,
           role,
+          invite_token: inviteToken,
+          invite_expires: inviteExpires.toISOString(),
         },
       ])
-      .select('id, email, tenant_id, role')
+      .select('id, email, tenant_id, role, invite_token')
       .single();
 
-    if (error) return res.status(500).json({ error: 'Toevoegen mislukt' });
+    if (error) return res.status(500).json({ error: "Toevoegen mislukt" });
 
-    // Verstuur invite e-mail met Resend
-    try {
-      await resend.emails.send({
-        from: process.env.RESEND_FROM || 'noreply@resend.dev',
-        to: [emailLower],
-        subject: "Uitnodiging voor CallLogix",
-        text: `Hallo,
+    // Bouw invite-link (frontend url)
+    const inviteLink = `${FRONTEND_URL}/set-password?token=${inviteToken}&email=${encodeURIComponent(emailLower)}`;
 
-Je bent uitgenodigd voor CallLogix. Je kunt nu inloggen op https://calllogix.nl/auth
+    // Stuur invite-mail via Nodemailer
+    await sendMail({
+      to: emailLower,
+      subject: "Je CallLogix account is aangemaakt",
+      html: `<h1>Welkom bij CallLogix!</h1>
+        <p>Klik <a href="${inviteLink}">hier</a> om je wachtwoord in te stellen.</p>
+        <p>Of kopieer deze link: ${inviteLink}</p>`,
+      text: `Welkom bij CallLogix! Stel je wachtwoord in via: ${inviteLink}`,
+    });
 
-Inloggegevens:
-E-mail: ${emailLower}
-Tijdelijk wachtwoord: ${password}
+    return res.status(201).json({ message: "Gebruiker uitgenodigd", user });
+  } catch (err) {
+    res.status(500).json({ error: "Internal server error" });
+  }
+}
 
-Je wordt gevraagd het wachtwoord te wijzigen na inloggen.
+// ========== SET PASSWORD (met invite-token) ==========
+export async function setPassword(req, res) {
+  try {
+    const { email, token, password } = req.body;
+    const now = new Date();
 
-Met vriendelijke groet,
-Het CallLogix team
-        `,
-      });
-    } catch (mailErr) {
-      // User wordt toegevoegd, maar mailen is mislukt:
-      console.error("Resend mail error:", mailErr);
-      return res.status(201).json({
-        message: 'Gebruiker aangemaakt, maar versturen e-mail is mislukt.',
-        user,
-        mailError: mailErr.message,
-      });
+    // Zoek user met correcte invite_token
+    const { data: user, error } = await supabase
+      .from("users")
+      .select("id, invite_token, invite_expires")
+      .eq("email", email.trim().toLowerCase())
+      .eq("invite_token", token)
+      .single();
+
+    if (!user || !user.invite_expires || new Date(user.invite_expires) < now) {
+      return res.status(400).json({ error: "Invite-token ongeldig of verlopen." });
     }
 
-    return res.status(201).json({ message: 'Gebruiker aangemaakt en invite verzonden', user });
+    // Hash wachtwoord
+    const salt = await bcrypt.genSalt(12);
+    const passwordHash = await bcrypt.hash(password, salt);
+
+    // Update user: wachtwoord instellen, invite_token wissen
+    const { error: updateError } = await supabase
+      .from("users")
+      .update({
+        password_hash: passwordHash,
+        invite_token: null,
+        invite_expires: null,
+      })
+      .eq("id", user.id);
+
+    if (updateError) {
+      return res.status(500).json({ error: "Wachtwoord opslaan mislukt" });
+    }
+
+    res.json({ success: true });
   } catch (err) {
-    console.error("[inviteUser] Internal server error:", err);
-    res.status(500).json({ error: 'Internal server error', details: err.message || err });
+    res.status(500).json({ error: "Internal server error" });
   }
 }
