@@ -56,6 +56,8 @@ export default function CallLogixTranscriptie() {
   const [transcript, setTranscript] = useState<string[]>([]);
   const [interim, setInterim] = useState("");
   const [suggestions, setSuggestions] = useState<{ id: string; text: string }[]>([]);
+  const [summary, setSummary] = useState(""); // <<== Toegevoegd voor Documenteer
+  const [summarizing, setSummarizing] = useState(false); // <<== Toegevoegd voor Documenteer
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const lastSuggestionSentRef = useRef("");
@@ -92,6 +94,7 @@ export default function CallLogixTranscriptie() {
     setTranscript([]);
     setInterim("");
     setSuggestions([]);
+    setSummary(""); // <<== Reset samenvatting bij nieuw gesprek
     setRecording(true);
 
     const tokenResp = await fetch(`${apiBase}/api/deepgram-token`, {
@@ -174,6 +177,24 @@ export default function CallLogixTranscriptie() {
     return { label, text, speaker };
   }
 
+  // <<== NIEUW: Documenteer functionaliteit
+  async function handleDocumenteer() {
+    setSummarizing(true);
+    setSummary("");
+    try {
+      const fullTranscript = transcript.map(line => line.split("|||")[0]).join("\n");
+      const response = await axios.post(`${apiBase}/api/summarize`, {
+        transcript: fullTranscript,
+        conversationId,
+        userId
+      });
+      setSummary(response.data.summary);
+    } catch (err) {
+      setSummary("Er ging iets mis bij het genereren van de samenvatting.");
+    }
+    setSummarizing(false);
+  }
+
   return (
     <main className="min-h-screen bg-calllogix-dark px-2 py-8">
       <div className="max-w-5xl mx-auto flex flex-col sm:flex-row gap-8 items-stretch">
@@ -250,6 +271,30 @@ export default function CallLogixTranscriptie() {
                 </div>
               );
             })()}
+          </div>
+          {/* <<== NIEUW: Documenteer-knop en samenvatting */}
+          <div className="my-6 flex flex-col gap-4 items-center w-full">
+            {!recording && transcript.length > 0 && (
+              <button
+                className="bg-blue-600 text-white px-6 py-3 rounded-2xl font-bold shadow hover:bg-blue-700 transition disabled:opacity-50"
+                onClick={handleDocumenteer}
+                disabled={summarizing}
+              >
+                {summarizing ? "Documentatie wordt gegenereerd..." : "Documenteer"}
+              </button>
+            )}
+            {summary && (
+              <div className="bg-green-900 text-green-100 rounded-2xl p-6 w-full max-w-2xl shadow-lg">
+                <div className="font-bold mb-2 text-lg">Ticket Samenvatting</div>
+                <pre className="whitespace-pre-wrap">{summary}</pre>
+                <button
+                  className="mt-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700"
+                  onClick={() => navigator.clipboard.writeText(summary)}
+                >
+                  Kopieer naar klembord
+                </button>
+              </div>
+            )}
           </div>
           <div className="flex gap-3 mt-6 justify-center">
             <button

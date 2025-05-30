@@ -14,6 +14,10 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const DG_API_KEY = process.env.DEEPGRAM_API_KEY;
 
+const summarizeRoute = require("./routes/summarize");
+app.use(summarizeRoute);
+
+
 // Supabase client (gebruik altijd service role key in backend)
 const supabase = createClient(
   process.env.SUPABASE_URL,
