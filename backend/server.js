@@ -7,6 +7,7 @@ import crypto from 'crypto';
 import suggestQuestionRouter from './routes/suggestQuestion.js';
 import authRouter from './routes/auth.js';
 import aiFeedbackRouter from './routes/aiFeedback.js';
+import summarizeRoute from "./routes/summarize.js";
 
 dotenv.config();
 
@@ -14,8 +15,6 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const DG_API_KEY = process.env.DEEPGRAM_API_KEY;
 
-const summarizeRoute = require("./routes/summarize");
-app.use(summarizeRoute);
 
 
 // Supabase client (gebruik altijd service role key in backend)
@@ -37,6 +36,7 @@ app.use(express.static('public'));
 app.use(authRouter);
 app.use(suggestQuestionRouter);
 app.use(aiFeedbackRouter);
+app.use(summarizeRoute);
 
 // === Health endpoint ===
 app.get('/api/health', (req, res) => {

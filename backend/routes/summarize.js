@@ -1,6 +1,6 @@
-const express = require("express");
+import express from "express";
+import { OpenAI } from "openai";
 const router = express.Router();
-const { OpenAI } = require("openai");
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 router.post("/api/summarize", async (req, res) => {
@@ -35,4 +35,4 @@ ${transcript}
   }
 });
 
-module.exports = router;
+export default router;
