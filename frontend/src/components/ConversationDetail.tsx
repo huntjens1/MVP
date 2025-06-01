@@ -4,7 +4,14 @@ import axios from "axios";
 
 export default function ConversationDetail() {
   const { id } = useParams();
-  const [transcripts, setTranscripts] = useState([]);
+  type TranscriptBlock = {
+  id: string;
+  speaker_label: string;
+  start_time: number;
+  content: string;
+};
+
+const [transcripts, setTranscripts] = useState<TranscriptBlock[]>([]);
 
   useEffect(() => {
     async function fetchTranscripts() {
