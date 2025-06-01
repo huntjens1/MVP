@@ -10,6 +10,7 @@ import aiFeedbackRouter from './routes/aiFeedback.js';
 import summarizeRoute from "./routes/summarize.js"; // <-- Samenvatten
 import analyticsRouter from './routes/analytics.js';
 import transcriptsRouter from "./routes/transcripts.js";
+import conversationsRouter from "./routes/conversations.js";
 
 dotenv.config();
 
@@ -39,6 +40,7 @@ app.use(aiFeedbackRouter);
 app.use(summarizeRoute); // <-- Samenvatten
 app.use(analyticsRouter);
 app.use(transcriptsRouter);
+app.use(conversationsRouter);
 
 // === Health endpoint ===
 app.get('/api/health', (req, res) => {
