@@ -8,6 +8,7 @@ import CallLogixTranscriptie from "./components/CallLogixTranscriptie";
 import OpnameGeschiedenis from "./components/OpnameGeschiedenis";
 import DashboardHome from "./components/DashboardHome";
 import Analytics from "./components/Analytics";
+import ConversationDetail from "./components/ConversationDetail";
 
 export default function App() {
   return (
@@ -29,7 +30,8 @@ export default function App() {
           <Route path="transcriptie" element={<CallLogixTranscriptie />} />
           <Route path="geschiedenis" element={<OpnameGeschiedenis />} />
           <Route path="admin" element={<AdminDashboard />} />
-          <Route path="/app/analytics" element={<Analytics />} /> 
+          <Route path="/app/analytics" element={<Analytics />} />
+          <Route path="/app/conversations/:id" element={<ConversationDetail />} />
         </Route>
       </Routes>
     </BrowserRouter>
