@@ -6,17 +6,17 @@ module.exports = {
   ],
   theme: {
     extend: {
-      colors: {
-        calllogix: {
-          primary: "#2563eb",   // Blauw (sidebar, titels, primair)
-          accent: "#06b6d4",    // Cyaan (knoppen, highlight)
-          dark: "#10172a",      // Heel donker blauw (achtergrond)
-          card: "#1e293b",      // Panel achtergrond
-          text: "#f4f7fa",      // Bijna wit (tekst)
-          subtext: "#64748b",   // Slate/grijs (subtekst, borders)
-        },
+      fontFamily: {
+        sans: ['Inter', 'sans-serif'],
       },
+      colors: {
+        primary: {
+          DEFAULT: "#2563eb",
+          light: "#3b82f6",
+          dark: "#1e40af"
+        }
+      }
     },
   },
   plugins: [],
-};
+}
