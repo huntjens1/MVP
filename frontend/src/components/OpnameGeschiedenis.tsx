@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import axios from "axios";
+import api from "../api"; // pas het pad aan indien nodig!
 
 type Conversation = {
   id: string;
@@ -23,9 +23,7 @@ export default function OpnameGeschiedenis() {
     async function fetchConversations() {
       setLoading(true);
       try {
-        const res = await axios.get(
-          `${import.meta.env.VITE_API_BASE}/api/conversations`
-        );
+        const res = await api.get("/api/conversations");
         setConversations(res.data || []);
       } catch (e) {
         setConversations([]);

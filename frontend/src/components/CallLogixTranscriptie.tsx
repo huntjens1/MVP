@@ -1,8 +1,6 @@
 import { useRef, useState } from "react";
-import axios from "axios";
+import api from "../api"; // pad kan verschillen!
 import { useAuth } from "../AuthContext";
-
-const apiBase = import.meta.env.VITE_API_BASE || "";
 
 // 👇 SuggestionFeedback-component stuurt nu ook de tekst mee
 function SuggestionFeedback({
@@ -19,9 +17,9 @@ function SuggestionFeedback({
   async function sendFeedback(rating: "good" | "bad") {
     setFeedback(rating);
     try {
-      await axios.post(`${apiBase}/api/ai-feedback`, {
+      await api.post("/api/ai-feedback", {
         suggestion_id: suggestion.id,
-        suggestion_text: suggestion.text, // <-- tekst nu meegeven!
+        suggestion_text: suggestion.text,
         conversation_id: conversationId,
         user_id: userId,
         feedback: rating,
@@ -80,12 +78,10 @@ export default function CallLogixTranscriptie() {
       return;
     lastSuggestionSentRef.current = currentTranscript.trim();
     try {
-      const resp = await fetch(`${apiBase}/api/suggest-question`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transcript: currentTranscript }),
+      const resp = await api.post("/api/suggest-question", {
+        transcript: currentTranscript,
       });
-      const data = await resp.json();
+      const data = resp.data;
       if (data.suggestions) setSuggestions(data.suggestions); // [{id, text}]
     } catch {}
   }
@@ -96,11 +92,9 @@ export default function CallLogixTranscriptie() {
     setSuggestions([]);
     setRecording(true);
 
-    const tokenResp = await fetch(`${apiBase}/api/deepgram-token`, {
-      method: "POST",
-    });
-    const tokenJson = await tokenResp.json();
-    const token = tokenJson.token;
+    // Deepgram-token ophalen (voor WebSocket authenticatie)
+    const tokenResp = await api.post("/api/deepgram-token", {});
+    const token = tokenResp.data.token;
     const wsUrl = `wss://api.deepgram.com/v1/listen?model=nova-2&language=nl&sample_rate=16000&interim_results=true&punctuate=true&diarize=true`;
 
     wsRef.current = new WebSocket(wsUrl, ["bearer", token]);

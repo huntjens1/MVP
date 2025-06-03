@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
 import { PlusCircle } from "lucide-react";
 import { useAuth } from "../AuthContext";
-import axios from "axios";
+import api from "../api";
 
-const apiBase = import.meta.env.VITE_API_BASE || "";
+const res = await api.get("/api/tenants");
 
 export default function AdminDashboard() {
   const [inviteEmail, setInviteEmail] = useState("");
@@ -23,7 +23,7 @@ export default function AdminDashboard() {
   useEffect(() => {
     async function fetchTenants() {
       try {
-        const res = await axios.get(`${apiBase}/api/tenants`);
+        const res = await api.get("/api/tenants");
         setTenants(res.data.tenants);
       } catch {
         setTenants([]);
@@ -40,7 +40,7 @@ export default function AdminDashboard() {
     setInviteError("");
     setLoading(true);
     try {
-      await axios.post(`${apiBase}/api/invite-user`, {
+      await api.post("/api/invite-user", {
         email: inviteEmail,
         password: Math.random().toString(36).slice(-10),
         tenant_id: inviteTenant,

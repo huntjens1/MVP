@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import axios from "axios";
+import api from "../api"; // pad kan verschillen, afhankelijk van je projectstructuur
 import { useAuth } from "../AuthContext";
 import { Navigate } from "react-router-dom";
 
@@ -18,9 +18,7 @@ export default function Analytics() {
     async function fetchData() {
       setLoading(true);
       try {
-        const res = await axios.get(
-          `${import.meta.env.VITE_API_BASE}/api/analytics/ai-feedback-summary`
-        );
+        const res = await api.get("/api/analytics/ai-feedback-summary");
         setSummary(res.data.summary || []);
       } catch {
         setSummary([]);

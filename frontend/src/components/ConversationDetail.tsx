@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import axios from "axios";
+import api from "../api"; // pas het pad aan indien nodig!
 
 type TranscriptBlock = {
   id: string;
@@ -17,10 +17,10 @@ export default function ConversationDetail() {
   useEffect(() => {
     async function fetchData() {
       // Haal conversatie op (optioneel, alleen voor header-info)
-      const convRes = await axios.get(`${import.meta.env.VITE_API_BASE}/api/conversations/${id}`);
+      const convRes = await api.get(`/api/conversations/${id}`);
       setConversation(convRes.data);
       // Haal transcript-blokken op
-      const transRes = await axios.get(`${import.meta.env.VITE_API_BASE}/api/conversations/${id}/transcripts`);
+      const transRes = await api.get(`/api/conversations/${id}/transcripts`);
       setTranscripts(transRes.data);
     }
     fetchData();

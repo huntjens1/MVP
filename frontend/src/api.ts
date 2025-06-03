@@ -1,9 +1,9 @@
-// src/api.js
-import axios from "axios";
+// src/api.ts
+import axios, { AxiosInstance } from "axios";
 
 const apiBase = import.meta.env.VITE_API_BASE || "";
 
-const api = axios.create({ baseURL: apiBase });
+const api: AxiosInstance = axios.create({ baseURL: apiBase });
 
 // Interceptor: JWT-token automatisch meesturen
 api.interceptors.request.use(

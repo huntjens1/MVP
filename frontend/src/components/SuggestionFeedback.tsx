@@ -1,5 +1,5 @@
 import { useState } from "react";
-import axios from "axios";
+import api from "../api"; // pas het pad aan indien nodig!
 
 type Props = {
   suggestion: { id: string, text: string };
@@ -13,8 +13,9 @@ export default function SuggestionFeedback({ suggestion, conversationId, userId 
   async function sendFeedback(rating: 'good' | 'bad') {
     setFeedback(rating);
     try {
-      await axios.post(`${import.meta.env.VITE_API_BASE}/api/ai-feedback`, {
+      await api.post("/api/ai-feedback", {
         suggestion_id: suggestion.id,
+        suggestion_text: suggestion.text, // Vergeet deze niet!
         conversation_id: conversationId,
         user_id: userId,
         feedback: rating,
