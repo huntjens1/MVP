@@ -3,7 +3,6 @@ import express from 'express';
 import { supabase } from '../supabaseClient.js';
 import { requireAuth } from '../middlewares/auth.js';
 
-
 const router = express.Router();
 
 router.post('/api/login', login);
@@ -21,6 +20,6 @@ router.get('/api/users', requireAuth, async (req, res) => {
 
 await supabase
   .from("users")
-  .insert([{ ...userData, tenant_id: req.user.tenant_id }]);
+  .insert([{ ...req.body, tenant_id: req.user.tenant_id }]);
 
 export default router;
