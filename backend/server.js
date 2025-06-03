@@ -1,13 +1,13 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import fetch from 'node-fetch'; // npm install node-fetch
+import fetch from 'node-fetch';
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
 import suggestQuestionRouter from './routes/suggestQuestion.js';
 import authRouter from './routes/auth.js';
 import aiFeedbackRouter from './routes/aiFeedback.js';
-import summarizeRoute from "./routes/summarize.js"; // <-- Samenvatten
+import summarizeRoute from "./routes/summarize.js";
 import analyticsRouter from './routes/analytics.js';
 import transcriptsRouter from "./routes/transcripts.js";
 import conversationsRouter from "./routes/conversations.js";
@@ -25,7 +25,6 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// **DIT MOET ALTIJD VOOR JE ROUTERS**
 app.use(express.json());
 app.use(cors({
   origin: [
@@ -38,7 +37,7 @@ app.use(express.static('public'));
 app.use(authRouter);
 app.use(suggestQuestionRouter);
 app.use(aiFeedbackRouter);
-app.use(summarizeRoute); // <-- Samenvatten
+app.use(summarizeRoute);
 app.use(analyticsRouter);
 app.use(transcriptsRouter);
 app.use(conversationsRouter);
@@ -154,6 +153,18 @@ app.post('/api/invite-user', async (req, res) => {
 
     return res.status(200).json({ success: true, info: "Invite verstuurd, user toegevoegd" });
   }
+});
+
+// === TENANTS ENDPOINT: alleen superadmin mag alle tenants zien ===
+app.get("/api/tenants", requireAuth, async (req, res) => {
+  if (req.user.role !== "superadmin") {
+    return res.status(403).json({ error: "Alleen superadmin mag alle tenants zien" });
+  }
+  const { data, error } = await supabase
+    .from("tenants")
+    .select("id, name, domain, created_at");
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ tenants: data });
 });
 
 // === Server starten ===
