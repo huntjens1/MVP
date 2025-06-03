@@ -14,30 +14,31 @@ export async function login(req, res) {
     const { email, password } = req.body;
     const emailLower = email.trim().toLowerCase();
 
-    const { data: user, error } = await supabase
+    const { data: user } = await supabase
       .from('users')
       .select('id, email, password_hash, tenant_id, role')
       .eq('email', emailLower)
       .single();
 
-    if (!user) {
-      return res.status(401).json({ error: 'Invalid credentials (not found)' });
-    }
-    if (!user.password_hash) {
-      return res.status(401).json({ error: 'Invalid credentials (geen hash)' });
+    if (!user || !user.password_hash) {
+      return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) {
-      return res.status(401).json({ error: 'Invalid credentials (hash mismatch)' });
+      return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    const token = jwt.sign({
-      id: user.id,
-      email: user.email,
-      role: user.role,
-      tenant_id: user.tenant_id
-    }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+    const token = jwt.sign(
+      {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        tenant_id: user.tenant_id,
+      },
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRES_IN }
+    );
 
     res.json({
       token,
@@ -45,8 +46,8 @@ export async function login(req, res) {
         id: user.id,
         email: user.email,
         tenant_id: user.tenant_id,
-        role: user.role
-      }
+        role: user.role,
+      },
     });
   } catch (err) {
     console.error("LOGIN ERROR:", err);
@@ -58,14 +59,13 @@ export async function login(req, res) {
 export async function inviteUser(req, res) {
   try {
     const { email, tenant_id, role } = req.body;
-
     if (!email || !tenant_id || !role) {
       return res.status(400).json({ error: "Missing fields" });
     }
 
     const emailLower = email.trim().toLowerCase();
     const inviteToken = crypto.randomBytes(32).toString("hex");
-    const inviteExpires = new Date(Date.now() + 1000 * 60 * 60 * 24); // 24 uur geldig
+    const inviteExpires = new Date(Date.now() + 1000 * 60 * 60 * 24); // 24 uur
 
     // Check of user al bestaat
     const { data: existing } = await supabase
@@ -81,24 +81,22 @@ export async function inviteUser(req, res) {
     // Voeg user toe met invite_token
     const { data: user, error } = await supabase
       .from('users')
-      .insert([
-        {
-          email: emailLower,
-          tenant_id,
-          role,
-          invite_token: inviteToken,
-          invite_expires: inviteExpires.toISOString(),
-        },
-      ])
+      .insert([{
+        email: emailLower,
+        tenant_id,
+        role,
+        invite_token: inviteToken,
+        invite_expires: inviteExpires.toISOString(),
+      }])
       .select('id, email, tenant_id, role, invite_token')
       .single();
 
     if (error) return res.status(500).json({ error: "Toevoegen mislukt" });
 
-    // Bouw invite-link (frontend url)
+    // Bouw invite-link
     const inviteLink = `${FRONTEND_URL}/set-password?token=${inviteToken}&email=${encodeURIComponent(emailLower)}`;
 
-    // Stuur invite-mail via Nodemailer
+    // Stuur invite-mail
     await sendMail({
       to: emailLower,
       subject: "Je CallLogix account is aangemaakt",
@@ -122,7 +120,7 @@ export async function setPassword(req, res) {
     const now = new Date();
 
     // Zoek user met correcte invite_token
-    const { data: user, error } = await supabase
+    const { data: user } = await supabase
       .from("users")
       .select("id, invite_token, invite_expires")
       .eq("email", email.trim().toLowerCase())
