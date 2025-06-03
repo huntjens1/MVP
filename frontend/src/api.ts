@@ -1,5 +1,4 @@
-// src/api.ts
-import axios, { AxiosInstance } from "axios";
+import axios, { type AxiosInstance } from "axios";
 
 const apiBase = import.meta.env.VITE_API_BASE || "";
 

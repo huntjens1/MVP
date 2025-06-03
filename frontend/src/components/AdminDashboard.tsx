@@ -3,8 +3,6 @@ import { PlusCircle } from "lucide-react";
 import { useAuth } from "../AuthContext";
 import api from "../api";
 
-const res = await api.get("/api/tenants");
-
 export default function AdminDashboard() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("support"); // default geldige rol!
