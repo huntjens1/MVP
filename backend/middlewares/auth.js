@@ -1,27 +1,35 @@
-// middlewares/auth.js
-import jwt from "jsonwebtoken";
+import { login, inviteUser } from '../controllers/authController.js';
+import express from 'express';
+import { supabase } from '../supabaseClient.js';
+import { requireAuth } from '../middlewares/auth.js';
+import { requireRole } from '../middlewares/requireRole.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || "change_this";
+const router = express.Router();
 
-export function requireAuth(req, res, next) {
-  const authHeader = req.headers.authorization || "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-  if (!token) return res.status(401).json({ error: "Geen token meegegeven" });
+router.post('/api/login', login);
 
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
-    next();
-  } catch (err) {
-    return res.status(401).json({ error: "JWT ongeldig of verlopen" });
-  }
-}
+// Invite user: alleen manager en superadmin
+router.post('/api/invite-user', requireAuth, requireRole(["manager", "superadmin"]), inviteUser);
 
-// Optioneel: alleen admin
-export function requireRole(role) {
-  return (req, res, next) => {
-    if (!req.user) return res.status(401).json({ error: "Niet ingelogd" });
-    if (req.user.role !== role) return res.status(403).json({ error: "Geen rechten" });
-    next();
-  };
-}
+// Gebruikers ophalen: alleen manager en superadmin
+router.get('/api/users', requireAuth, requireRole(["manager", "superadmin"]), async (req, res) => {
+  const { data, error } = await supabase
+    .from("users")
+    .select("id, email, role, created_at")
+    .eq("tenant_id", req.user.tenant_id);
+  if (error) return res.status(500).json({ error: "Kan users niet ophalen" });
+  res.json({ users: data });
+});
+
+// Gebruiker toevoegen: alleen manager en superadmin
+router.post('/api/users', requireAuth, requireRole(["manager", "superadmin"]), async (req, res) => {
+  const { email, role, ...rest } = req.body;
+  if (!email || !role) return res.status(400).json({ error: "Missing fields" });
+  const { error } = await supabase
+    .from("users")
+    .insert([{ email, role, ...rest, tenant_id: req.user.tenant_id }]);
+  if (error) return res.status(500).json({ error: error.message });
+  res.status(201).json({ success: true });
+});
+
+export default router;
