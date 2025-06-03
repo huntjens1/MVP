@@ -1,12 +1,13 @@
 import express from 'express';
 import OpenAI from "openai";
 import { v4 as uuidv4 } from "uuid";
+import { requireAuth } from "../middlewares/auth.js";
 
 const router = express.Router();
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-router.post('/api/suggest-question', async (req, res) => {
+router.post('/api/suggest-question', requireAuth, async (req, res) => {
   const { transcript } = req.body;
   if (!transcript || typeof transcript !== 'string' || transcript.trim().length < 10) {
     return res.status(400).json({ error: "Transcript te kort voor suggesties." });

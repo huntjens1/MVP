@@ -11,6 +11,7 @@ import summarizeRoute from "./routes/summarize.js"; // <-- Samenvatten
 import analyticsRouter from './routes/analytics.js';
 import transcriptsRouter from "./routes/transcripts.js";
 import conversationsRouter from "./routes/conversations.js";
+import { requireAuth } from './middlewares/auth.js';
 
 dotenv.config();
 

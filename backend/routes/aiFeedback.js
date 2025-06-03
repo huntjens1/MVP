@@ -1,16 +1,27 @@
 import express from "express";
 import { supabase } from "../supabaseClient.js";
+import { requireAuth } from "../middlewares/auth.js";
 
 const router = express.Router();
 
-router.post("/api/ai-feedback", async (req, res) => {
+router.post("/api/ai-feedback", requireAuth, async (req, res) => {
   const { suggestion_id, suggestion_text, conversation_id, user_id, feedback } = req.body;
   if (!suggestion_id || !suggestion_text || !conversation_id || !user_id || !feedback) {
     return res.status(400).json({ error: "Missing fields" });
   }
+  // Check conversation is van deze tenant
+  const { data: convo, error: convoErr } = await supabase
+    .from("conversations")
+    .select("tenant_id")
+    .eq("id", conversation_id)
+    .single();
+  if (convoErr || !convo || convo.tenant_id !== req.user.tenant_id) {
+    return res.status(403).json({ error: "Geen toegang tot deze conversation" });
+  }
+
   const { error } = await supabase
-    .from('ai_suggestion_feedback')
-    .insert([{ suggestion_id, suggestion_text, conversation_id, user_id, feedback }]);
+    .from("ai_suggestion_feedback")
+    .insert([{ suggestion_id, suggestion_text, conversation_id, user_id, feedback, tenant_id: req.user.tenant_id }]);
   if (error) {
     console.error("SUPABASE FEEDBACK ERROR:", error);
     return res.status(500).json({ error: "Failed to log feedback" });

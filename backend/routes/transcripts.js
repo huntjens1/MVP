@@ -1,12 +1,24 @@
 import express from "express";
 import { supabase } from "../supabaseClient.js";
+import { requireAuth } from "../middlewares/auth.js";
 
 const router = express.Router();
 
-// POST /api/conversations/:id/transcripts/deepgram
-router.post("/api/conversations/:id/transcripts/deepgram", async (req, res) => {
+// Deepgram transcriptie opslaan voor eigen tenant
+router.post("/api/conversations/:id/transcripts/deepgram", requireAuth, async (req, res) => {
   const { id } = req.params;
-  const { deepgram } = req.body; // de volledige Deepgram-response
+  const { deepgram } = req.body;
+
+  // Check conversation is van deze tenant
+  const { data: convo, error: convoErr } = await supabase
+    .from("conversations")
+    .select("tenant_id")
+    .eq("id", id)
+    .single();
+  if (convoErr || !convo || convo.tenant_id !== req.user.tenant_id) {
+    return res.status(403).json({ error: "Geen toegang tot deze conversation" });
+  }
+
   if (!deepgram || !deepgram.channel || !deepgram.channel.alternatives?.[0]?.transcript) {
     return res.status(400).json({ error: "Invalid Deepgram data" });
   }
@@ -50,15 +62,26 @@ router.post("/api/conversations/:id/transcripts/deepgram", async (req, res) => {
     speaker: f.speaker,
     speaker_label: f.speaker_label,
     content: f.content,
+    tenant_id: req.user.tenant_id, // optioneel, zie eerdere uitleg
   }));
   const { error } = await supabase.from("transcripts").insert(rows);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ success: true, inserted: rows.length });
 });
 
-// GET /api/conversations/:id/transcripts
-router.get("/api/conversations/:id/transcripts", async (req, res) => {
+// Transcripties ophalen (alleen voor eigen tenant)
+router.get("/api/conversations/:id/transcripts", requireAuth, async (req, res) => {
   const { id } = req.params;
+  // Check conversation is van deze tenant
+  const { data: convo, error: convoErr } = await supabase
+    .from("conversations")
+    .select("tenant_id")
+    .eq("id", id)
+    .single();
+  if (convoErr || !convo || convo.tenant_id !== req.user.tenant_id) {
+    return res.status(403).json({ error: "Geen toegang tot deze conversation" });
+  }
+
   const { data, error } = await supabase
     .from("transcripts")
     .select("*")

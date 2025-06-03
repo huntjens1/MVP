@@ -1,11 +1,12 @@
 // routes/summarize.js
 import express from "express";
 import { OpenAI } from "openai";
+import { requireAuth } from "../middlewares/auth.js";
 
 const router = express.Router();
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-router.post("/api/summarize", async (req, res) => {
+router.post('/api/suggest-question', requireAuth, async (req, res) => {
   const { transcript, conversationId, userId } = req.body;
   if (!transcript || !transcript.trim()) {
     return res.status(400).json({ summary: "Transcript ontbreekt." });
