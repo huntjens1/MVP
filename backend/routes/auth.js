@@ -1,6 +1,8 @@
 import { login, inviteUser } from '../controllers/authController.js';
 import express from 'express';
 import { supabase } from '../supabaseClient.js';
+import { requireAuth } from '../middlewares/auth.js';
+
 
 const router = express.Router();
 
