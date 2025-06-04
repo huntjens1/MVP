@@ -12,6 +12,8 @@ import summarizeRoute from "./routes/summarize.js";
 import analyticsRouter from './routes/analytics.js';
 import transcriptsRouter from "./routes/transcripts.js";
 import conversationsRouter from "./routes/conversations.js";
+import tenantsRouter from './routes/tenants.js';
+
 
 import { requireAuth } from './middlewares/auth.js';
 import { requireRole } from './middlewares/requireRole.js';
@@ -48,6 +50,7 @@ app.use(summarizeRoute);
 app.use(analyticsRouter);
 app.use(transcriptsRouter);
 app.use(conversationsRouter);
+app.use(tenantsRouter);
 
 // ===== Health endpoint =====
 app.get('/api/health', (req, res) => {
