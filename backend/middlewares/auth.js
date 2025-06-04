@@ -1,35 +1,26 @@
-import { login, inviteUser } from '../controllers/authController.js';
-import express from 'express';
-import { supabase } from '../supabaseClient.js';
-import { requireAuth } from '../middlewares/auth.js';
-import { requireRole } from '../middlewares/requireRole.js';
+import jwt from "jsonwebtoken";
 
-const router = express.Router();
+/**
+ * JWT-auth middleware voor Express.
+ * - Vereist een geldige Bearer token in Authorization header.
+ * - Zet decoded user-info als req.user voor RBAC en tenant checks.
+ * - Bij ontbreken of ongeldige token: 401.
+ */
+export function requireAuth(req, res, next) {
+  const authHeader = req.headers.authorization || "";
+  const token = authHeader && authHeader.startsWith("Bearer ")
+    ? authHeader.split(" ")[1]
+    : null;
 
-router.post('/api/login', login);
+  if (!token) {
+    return res.status(401).json({ error: "No token provided" });
+  }
 
-// Invite user: alleen manager en superadmin
-router.post('/api/invite-user', requireAuth, requireRole(["manager", "superadmin"]), inviteUser);
-
-// Gebruikers ophalen: alleen manager en superadmin
-router.get('/api/users', requireAuth, requireRole(["manager", "superadmin"]), async (req, res) => {
-  const { data, error } = await supabase
-    .from("users")
-    .select("id, email, role, created_at")
-    .eq("tenant_id", req.user.tenant_id);
-  if (error) return res.status(500).json({ error: "Kan users niet ophalen" });
-  res.json({ users: data });
-});
-
-// Gebruiker toevoegen: alleen manager en superadmin
-router.post('/api/users', requireAuth, requireRole(["manager", "superadmin"]), async (req, res) => {
-  const { email, role, ...rest } = req.body;
-  if (!email || !role) return res.status(400).json({ error: "Missing fields" });
-  const { error } = await supabase
-    .from("users")
-    .insert([{ email, role, ...rest, tenant_id: req.user.tenant_id }]);
-  if (error) return res.status(500).json({ error: error.message });
-  res.status(201).json({ success: true });
-});
-
-export default router;
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = payload;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+}
