@@ -1,62 +1,51 @@
 import { useEffect, useState } from "react";
-import api from "../api"; // pad kan verschillen, afhankelijk van je projectstructuur
-import { useAuth } from "../AuthContext";
-import { Navigate } from "react-router-dom";
+import api from "../api";
+
+type Overview = {
+  aht_seconds: number;
+  suggestion_positive_pct: number;
+};
 
 export default function Analytics() {
-  const { user } = useAuth();
-  const [summary, setSummary] = useState<
-    { suggestion_id: string; suggestion_text: string; thumbs_up: number; thumbs_down: number }[]
-  >([]);
+  const [data, setData] = useState<Overview | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  if (!user || !["superadmin", "manager"].includes(user.role)) {
-    return <Navigate to="/app" />;
-  }
-
   useEffect(() => {
-    async function fetchData() {
-      setLoading(true);
+    (async () => {
       try {
-        const res = await api.get("/api/analytics/ai-feedback-summary");
-        setSummary(res.data.summary || []);
-      } catch {
-        setSummary([]);
+        const res = await api.analyticsOverview(); // nieuwe helper
+        setData(res);
+      } catch (e: any) {
+        setError(e?.message || "Kon analytics niet laden");
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
-    }
-    fetchData();
+    })();
   }, []);
 
+  if (loading) return <div>Analytics laden…</div>;
+  if (error) return <div className="text-red-600">{error}</div>;
+  if (!data) return <div>Geen data</div>;
+
+  const minutes = Math.floor((data.aht_seconds || 0) / 60);
+  const seconds = (data.aht_seconds || 0) % 60;
+
   return (
-    <main className="max-w-3xl mx-auto p-8">
-      <h1 className="text-3xl font-bold mb-6 text-calllogix-accent">AI Suggestie Feedback Analytics</h1>
-      {loading ? (
-        <div>Bezig met laden...</div>
-      ) : summary.length === 0 ? (
-        <div>Geen feedback gevonden.</div>
-      ) : (
-        <table className="w-full text-left border mt-4">
-          <thead>
-            <tr>
-              <th className="border-b px-4 py-2">Suggestie</th>
-              <th className="border-b px-4 py-2">👍</th>
-              <th className="border-b px-4 py-2">👎</th>
-            </tr>
-          </thead>
-          <tbody>
-            {summary
-              .sort((a, b) => b.thumbs_up - a.thumbs_up)
-              .map((row) => (
-                <tr key={row.suggestion_id}>
-                  <td className="border-b px-4 py-2">{row.suggestion_text}</td>
-                  <td className="border-b px-4 py-2">{row.thumbs_up}</td>
-                  <td className="border-b px-4 py-2">{row.thumbs_down}</td>
-                </tr>
-              ))}
-          </tbody>
-        </table>
-      )}
-    </main>
+    <div className="space-y-4">
+      <h2 className="text-2xl font-bold">Analytics</h2>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="rounded border p-4">
+          <div className="text-sm opacity-70">Average Handle Time</div>
+          <div className="text-xl font-bold">
+            {minutes}m {seconds}s
+          </div>
+        </div>
+        <div className="rounded border p-4">
+          <div className="text-sm opacity-70">AI Suggestie-acceptatie</div>
+          <div className="text-xl font-bold">{data.suggestion_positive_pct}%</div>
+        </div>
+      </div>
+    </div>
   );
 }

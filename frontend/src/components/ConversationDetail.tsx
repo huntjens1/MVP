@@ -1,61 +1,73 @@
 import { useEffect, useState } from "react";
+import api from "../api";
 import { useParams } from "react-router-dom";
-import api from "../api"; // pas het pad aan indien nodig!
 
-type TranscriptBlock = {
+type Conversation = {
   id: string;
-  speaker_label: string;
-  start_time: number;
-  content: string;
+  started_at?: string;
+  ended_at?: string | null;
+  status?: string;
+  duration_seconds?: number | null;
 };
 
 export default function ConversationDetail() {
-  const { id } = useParams();
-  const [conversation, setConversation] = useState<any>(null);
-  const [transcripts, setTranscripts] = useState<TranscriptBlock[]>([]);
+  const { id } = useParams<{ id: string }>();
+  const [conv, setConv] = useState<Conversation | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [closing, setClosing] = useState(false);
 
   useEffect(() => {
-    async function fetchData() {
-      // Haal conversatie op (optioneel, alleen voor header-info)
-      const convRes = await api.get(`/api/conversations/${id}`);
-      setConversation(convRes.data);
-      // Haal transcript-blokken op
-      const transRes = await api.get(`/api/conversations/${id}/transcripts`);
-      setTranscripts(transRes.data);
-    }
-    fetchData();
+    if (!id) return;
+    (async () => {
+      try {
+        // Gebruik jouw bestaande endpoint; compat .get blijft werken:
+        const res = await api.get(`/api/conversations/${id}`);
+        setConv(res?.conversation || res);
+      } catch (e: any) {
+        setErr(e?.message || "Kon conversatie niet laden");
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, [id]);
 
-  if (!conversation) return <div>Bezig met laden...</div>;
+  const closeConversation = async () => {
+    if (!id) return;
+    setClosing(true);
+    try {
+      const res = await api.post(`/api/conversations/${id}/close`);
+      setConv(res?.conversation || res);
+      alert("Conversatie gesloten");
+    } catch (e: any) {
+      alert(e?.message || "Sluiten mislukt");
+    } finally {
+      setClosing(false);
+    }
+  };
+
+  if (loading) return <div>Conversatie laden…</div>;
+  if (err) return <div className="text-red-600">{err}</div>;
+  if (!conv) return <div>Niet gevonden</div>;
 
   return (
-    <main className="max-w-4xl mx-auto p-8">
-      <h1 className="text-2xl font-bold mb-4">Gespreksdetails</h1>
-      <div className="mb-4 p-4 rounded bg-calllogix-card">
-        <strong>Datum:</strong> {new Date(conversation.started_at).toLocaleString()}<br />
-        <strong>Duur:</strong> {conversation.duration_seconds || 0} seconden<br />
-        <strong>Agent:</strong> {conversation.agent_id}<br />
-        <strong>Klant:</strong> {conversation.customer_id}<br />
-        <strong>ITIL categorie:</strong> {conversation.itil_category}<br />
-        <strong>Prioriteit:</strong> {conversation.priority}<br />
-        <strong>Impact:</strong> {conversation.impact}<br />
-        <strong>Tags:</strong> {(conversation.tags || []).join(", ")}
+    <div className="space-y-4">
+      <h2 className="text-2xl font-bold">Conversatie</h2>
+      <div className="rounded border p-4 space-y-2">
+        <div><b>ID:</b> {conv.id}</div>
+        <div><b>Status:</b> {conv.status}</div>
+        <div><b>Gestart:</b> {conv.started_at}</div>
+        <div><b>Geëindigd:</b> {conv.ended_at || "-"}</div>
+        <div><b>Duur:</b> {conv.duration_seconds ?? 0}s</div>
       </div>
-      <div className="mb-4 p-4 rounded bg-calllogix-card">
-        <h2 className="text-xl font-semibold mb-2">Transcriptie</h2>
-        <ul>
-          {transcripts.map(block => (
-            <li key={block.id} className="mb-2">
-              <span className="font-bold">{block.speaker_label}</span>{" "}
-              <span className="text-gray-500">({block.start_time.toFixed(1)}s):</span>{" "}
-              {block.content}
-            </li>
-          ))}
-        </ul>
-      </div>
-      {conversation.audio_url && (
-        <audio controls src={conversation.audio_url} className="mt-4 w-full" />
-      )}
-    </main>
+
+      <button
+        onClick={closeConversation}
+        disabled={closing}
+        className={`px-4 py-2 rounded ${closing ? "opacity-60" : "bg-black text-white"}`}
+      >
+        {closing ? "Sluiten…" : "Sluit conversatie"}
+      </button>
+    </div>
   );
 }

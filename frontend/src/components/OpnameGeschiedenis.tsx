@@ -1,105 +1,59 @@
 import { useEffect, useState } from "react";
+import api from "../api";
 import { Link } from "react-router-dom";
-import api from "../api"; // pas het pad aan indien nodig!
 
-type Conversation = {
+type ConversationRow = {
   id: string;
-  started_at: string;
-  ended_at: string | null;
-  duration_seconds: number | null;
-  agent_id: string | null;
-  customer_id: string | null;
-  itil_category: string | null;
-  priority: string | null;
-  impact: string | null;
-  tags: string[] | null;
+  started_at?: string;
+  ended_at?: string | null;
+  status?: string;
+  duration_seconds?: number | null;
 };
 
 export default function OpnameGeschiedenis() {
-  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [rows, setRows] = useState<ConversationRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    async function fetchConversations() {
-      setLoading(true);
+    (async () => {
       try {
-        const res = await api.get("/api/conversations");
-        setConversations(res.data || []);
-      } catch (e) {
-        setConversations([]);
+        // Gebruik jouw bestaande endpoint (bijv. /api/conversations?limit=50)
+        const res = await api.get(`/api/conversations?limit=50`);
+        setRows(res?.items || res?.conversations || res || []);
+      } catch (e: any) {
+        setErr(e?.message || "Kon opnames niet laden");
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
-    }
-    fetchConversations();
+    })();
   }, []);
 
+  if (loading) return <div>Geschiedenis laden…</div>;
+  if (err) return <div className="text-red-600">{err}</div>;
+
   return (
-    <section>
-      <h2 className="text-3xl font-black text-calllogix-primary mb-6">
-        Opname Geschiedenis
-      </h2>
-      <div className="bg-calllogix-card rounded-2xl p-8 shadow-xl text-calllogix-text">
-        {loading ? (
-          <div className="text-calllogix-accent">Laden...</div>
-        ) : conversations.length === 0 ? (
-          <p>Nog geen opnames...</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead>
-                <tr>
-                  <th className="px-4 py-2 text-left">Datum</th>
-                  <th className="px-4 py-2 text-left">Duur</th>
-                  <th className="px-4 py-2 text-left">Agent</th>
-                  <th className="px-4 py-2 text-left">Klant</th>
-                  <th className="px-4 py-2 text-left">ITIL categorie</th>
-                  <th className="px-4 py-2 text-left">Prioriteit</th>
-                  <th className="px-4 py-2 text-left">Tags</th>
-                  <th className="px-4 py-2"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {conversations.map((conv) => (
-                  <tr
-                    key={conv.id}
-                    className="border-b hover:bg-calllogix-primary/10 transition"
-                  >
-                    <td className="px-4 py-2 font-mono">
-                      {conv.started_at
-                        ? new Date(conv.started_at).toLocaleString()
-                        : "-"}
-                    </td>
-                    <td className="px-4 py-2">
-                      {conv.duration_seconds
-                        ? `${Math.floor(conv.duration_seconds / 60)}m ${conv.duration_seconds % 60}s`
-                        : "-"}
-                    </td>
-                    <td className="px-4 py-2">{conv.agent_id || "-"}</td>
-                    <td className="px-4 py-2">{conv.customer_id || "-"}</td>
-                    <td className="px-4 py-2">
-                      {conv.itil_category || "-"}
-                    </td>
-                    <td className="px-4 py-2">{conv.priority || "-"}</td>
-                    <td className="px-4 py-2">
-                      {(conv.tags && conv.tags.length > 0)
-                        ? conv.tags.join(", ")
-                        : "-"}
-                    </td>
-                    <td className="px-4 py-2">
-                      <Link
-                        to={`/app/conversations/${conv.id}`}
-                        className="text-calllogix-accent hover:underline font-semibold"
-                      >
-                        Details →
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+    <div className="space-y-4">
+      <h2 className="text-2xl font-bold">Opname geschiedenis</h2>
+      <div className="rounded border divide-y">
+        {rows.length === 0 && <div className="p-4 opacity-70">Geen gesprekken gevonden</div>}
+        {rows.map((r) => (
+          <div key={r.id} className="p-4 flex items-center justify-between">
+            <div className="space-y-1">
+              <div className="text-sm opacity-70">{r.status || "-"}</div>
+              <div className="text-xs opacity-60">
+                {r.started_at} → {r.ended_at || "-"} ({r.duration_seconds ?? 0}s)
+              </div>
+            </div>
+            <Link
+              to={`/conversations/${r.id}`}
+              className="px-3 py-1 rounded bg-black text-white text-sm"
+            >
+              Details
+            </Link>
           </div>
-        )}
+        ))}
       </div>
-    </section>
+    </div>
   );
 }
