@@ -1,57 +1,28 @@
 import express from 'express';
-import OpenAI from "openai";
-import { v4 as uuidv4 } from "uuid";
-import { requireAuth } from "../middlewares/auth.js";
-import { requireRole } from "../middlewares/requireRole.js";
+import { v4 as uuidv4 } from 'uuid';
+import { requireAuth } from '../middlewares/auth.js';
+import { requireRole } from '../middlewares/requireRole.js';
+import { suggestQuestions } from '../utils/llmClient.js';
 
 const router = express.Router();
-const allRoles = ["support", "coordinator", "manager", "superadmin"];
+const allRoles = ['support','coordinator','manager','superadmin'];
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-router.post('/api/suggest-question',
-  requireAuth,
-  requireRole(allRoles),
-  async (req, res) => {
+router.post('/api/suggest-question', requireAuth, requireRole(allRoles), async (req, res) => {
+  try {
     const { transcript } = req.body;
-    if (!transcript || typeof transcript !== 'string' || transcript.trim().length < 10) {
-      return res.status(400).json({ error: "Transcript te kort voor suggesties." });
-    }
+    if (!transcript) return res.status(400).json({ error: 'transcript is vereist' });
 
-    try {
-      const prompt = `
-Je bent een slimme IT-servicedesk-assistent. Analyseer het volgende live gesprek en geef 2-3 korte vraagsuggesties die de agent direct aan de klant kan stellen om het probleem snel en duidelijk te documenteren.
-- Focus op open vragen, geen 'ja/nee' vragen.
-- Geef elk voorstel in één zin, alleen relevante vervolgvraag voor ticketdocumentatie.
-Voorbeeld:
-[Transcript]
-${transcript}
-[Suggesties]
-- 
-      `;
+    const text = await suggestQuestions({ transcript });
+    const suggestions = text
+      .split('\n')
+      .map(l => l.replace(/^[-•]\s*/, '').trim())
+      .filter(l => l.length > 4)
+      .map(t => ({ id: uuidv4(), text: t }));
 
-      const completion = await openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
-        messages: [
-          { role: "system", content: "Je bent een slimme IT-servicedesk-assistent. Je output moet alleen een lijst met korte suggestievragen zijn." },
-          { role: "user", content: prompt }
-        ],
-        max_tokens: 80,
-        temperature: 0.4,
-      });
-
-      const text = completion.choices[0].message?.content || "";
-      const suggestions = text
-        .split("\n")
-        .map(l => l.replace(/^[-•]\s*/, "").trim())
-        .filter(l => l.length > 4)
-        .map(text => ({ id: uuidv4(), text }));
-
-      return res.json({ suggestions });
-    } catch (err) {
-      res.status(500).json({ error: "AI suggestie mislukt." });
-    }
+    return res.json({ suggestions });
+  } catch {
+    return res.status(500).json({ error: 'AI suggestie mislukt.' });
   }
-);
+});
 
 export default router;

@@ -1,37 +1,29 @@
-import express from "express";
-import { supabase } from "../supabaseClient.js";
-import { requireAuth } from "../middlewares/auth.js";
-import { requireRole } from "../middlewares/requireRole.js";
+import express from 'express';
+import { requireAuth } from '../middlewares/auth.js';
+import { supabase } from '../supabaseClient.js';
 
 const router = express.Router();
-const allRoles = ["support", "coordinator", "manager", "superadmin"];
 
-// Feedback posten
-router.post("/api/ai-feedback",
-  requireAuth,
-  requireRole(allRoles),
-  async (req, res) => {
-    const { suggestion_id, suggestion_text, conversation_id, user_id, feedback } = req.body;
-    if (!suggestion_id || !suggestion_text || !conversation_id || !user_id || !feedback) {
-      return res.status(400).json({ error: "Missing fields" });
-    }
-    const { data: convo, error: convoErr } = await supabase
-      .from("conversations")
-      .select("tenant_id")
-      .eq("id", conversation_id)
-      .single();
-    if (convoErr || !convo || convo.tenant_id !== req.user.tenant_id) {
-      return res.status(403).json({ error: "Geen toegang tot deze conversation" });
-    }
-
-    const { error } = await supabase
-      .from("ai_suggestion_feedback")
-      .insert([{ suggestion_id, suggestion_text, conversation_id, user_id, feedback, tenant_id: req.user.tenant_id }]);
-    if (error) {
-      return res.status(500).json({ error: "Failed to log feedback" });
-    }
-    res.json({ success: true });
+router.post('/api/ai-feedback', requireAuth, async (req, res) => {
+  const user = req.user;
+  const { suggestion_id, conversation_id, feedback, suggestion_text } = req.body || {};
+  if (!conversation_id || typeof feedback === 'undefined') {
+    return res.status(400).json({ error: 'conversation_id en feedback vereist' });
   }
-);
+
+  const { error } = await supabase
+    .from('ai_suggestion_feedback')
+    .insert({
+      suggestion_id: suggestion_id || null,
+      conversation_id,
+      user_id: user.id,
+      feedback,           // -1 / 0 / 1
+      suggestion_text: suggestion_text || null,
+      tenant_id: user.tenant_id
+    });
+
+  if (error) return res.status(500).json({ error: 'feedback insert mislukt' });
+  return res.json({ ok: true });
+});
 
 export default router;

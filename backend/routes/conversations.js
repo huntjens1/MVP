@@ -1,81 +1,53 @@
-import express from "express";
-import { supabase } from "../supabaseClient.js";
-import { requireAuth } from "../middlewares/auth.js";
-import { requireRole } from "../middlewares/requireRole.js";
+import express from 'express';
+import { requireAuth } from '../middlewares/auth.js';
+import { supabase } from '../supabaseClient.js';
 
 const router = express.Router();
 
-// Alle rollen: support, coordinator, manager, superadmin
-const allRoles = ["support", "coordinator", "manager", "superadmin"];
+router.post('/api/conversations', requireAuth, async (req, res) => {
+  const user = req.user;
+  const { customer_id = null } = req.body || {};
+  const { data, error } = await supabase.from('conversations').insert({
+    tenant_id: user.tenant_id, agent_id: user.id, customer_id
+  }).select().single();
 
-// Gesprekken ophalen
-router.get("/api/conversations",
-  requireAuth,
-  requireRole(allRoles),
-  async (req, res) => {
-    const { data, error } = await supabase
-      .from("conversations")
-      .select("*")
-      .eq("tenant_id", req.user.tenant_id)
-      .order("started_at", { ascending: false });
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
-  }
-);
+  if (error) return res.status(500).json({ error: 'create conversation failed' });
+  res.json({ conversation: data });
+});
 
-// Specifiek gesprek ophalen
-router.get("/api/conversations/:id",
-  requireAuth,
-  requireRole(allRoles),
-  async (req, res) => {
-    const { id } = req.params;
-    const { data, error } = await supabase
-      .from("conversations")
-      .select("*")
-      .eq("id", id)
-      .eq("tenant_id", req.user.tenant_id)
-      .single();
-    if (error || !data) return res.status(404).json({ error: "Niet gevonden" });
-    res.json(data);
-  }
-);
+router.patch('/api/conversations/:id', requireAuth, async (req, res) => {
+  const user = req.user; const { id } = req.params;
+  const up = {};
+  ['status','impact','urgency','itil_category','priority','transcript','sla_due'].forEach(k => {
+    if (k in req.body) up[k] = req.body[k];
+  });
 
-// Gesprek aanmaken
-router.post("/api/conversations",
-  requireAuth,
-  requireRole(allRoles),
-  async (req, res) => {
-    const fields = req.body;
-    const { error } = await supabase
-      .from("conversations")
-      .insert([{ ...fields, tenant_id: req.user.tenant_id }]);
-    if (error) return res.status(500).json({ error: error.message });
-    res.status(201).json({ success: true });
-  }
-);
+  const { data, error } = await supabase
+    .from('conversations').update(up)
+    .eq('id', id).eq('tenant_id', user.tenant_id)
+    .select().single();
 
-// Gesprek updaten
-router.put("/api/conversations/:id",
-  requireAuth,
-  requireRole(allRoles),
-  async (req, res) => {
-    const { id } = req.params;
-    const fields = req.body;
-    const { data: convo, error: checkError } = await supabase
-      .from("conversations")
-      .select("id")
-      .eq("id", id)
-      .eq("tenant_id", req.user.tenant_id)
-      .single();
-    if (checkError || !convo) return res.status(404).json({ error: "Niet gevonden" });
+  if (error) return res.status(500).json({ error: 'update failed' });
+  res.json({ conversation: data });
+});
 
-    const { error } = await supabase
-      .from("conversations")
-      .update(fields)
-      .eq("id", id);
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ success: true });
-  }
-);
+router.post('/api/conversations/:id/close', requireAuth, async (req, res) => {
+  const user = req.user; const { id } = req.params;
+  const ended_at = new Date().toISOString();
+  const { data: conv, error: e1 } = await supabase
+    .from('conversations')
+    .select('started_at').eq('id', id).eq('tenant_id', user.tenant_id).single();
+  if (e1) return res.status(404).json({ error: 'not found' });
+
+  const duration = Math.max(0, Math.round((new Date(ended_at) - new Date(conv.started_at)) / 1000));
+
+  const { data, error } = await supabase
+    .from('conversations')
+    .update({ ended_at, duration_seconds: duration, status: 'afgesloten' })
+    .eq('id', id).eq('tenant_id', user.tenant_id).select().single();
+
+  if (error) return res.status(500).json({ error: 'close failed' });
+  res.json({ conversation: data });
+});
 
 export default router;

@@ -1,94 +1,69 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
-import fetch from 'node-fetch';
-import { createClient } from '@supabase/supabase-js';
-import crypto from 'crypto';
+import http from 'http';
 
 import suggestQuestionRouter from './routes/suggestQuestion.js';
 import authRouter from './routes/auth.js';
 import aiFeedbackRouter from './routes/aiFeedback.js';
-import summarizeRoute from "./routes/summarize.js";
+import summarizeRoute from './routes/summarize.js';
 import analyticsRouter from './routes/analytics.js';
-import transcriptsRouter from "./routes/transcripts.js";
-import conversationsRouter from "./routes/conversations.js";
+import transcriptsRouter from './routes/transcripts.js';
+import conversationsRouter from './routes/conversations.js';
 import tenantsRouter from './routes/tenants.js';
+import wsTokenRouter from './routes/wsToken.js';
 
-
-import { requireAuth } from './middlewares/auth.js';
-import { requireRole } from './middlewares/requireRole.js';
+import { suggestionsSSE } from './streams/suggestionsSSE.js';
+import { initMicBridge } from './ws/deepgramBridge.js';
+import { errorHandler } from './middlewares/errorHandler.js';
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3001;
-const DG_API_KEY = process.env.DEEPGRAM_API_KEY;
+const server = http.createServer(app);
+const PORT = process.env.PORT || 8080;
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+const allowed = (process.env.ALLOWED_ORIGINS || '')
+  .split(',').map(s => s.trim()).filter(Boolean);
 
-// ===== CORS Middleware - altijd bovenaan vóór routes! =====
+// Security & basics
+app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(cors({
-  origin: [
-    "https://mvp-zeta-rose.vercel.app", // <-- jouw frontend live url
-    "http://localhost:5173"             // <-- voor lokaal testen
-  ],
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);
+    if (allowed.includes(origin)) return cb(null, true);
+    return cb(new Error('Not allowed by CORS'));
+  },
   credentials: true
 }));
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
+app.use(rateLimit({ windowMs: 60_000, max: 120 }));
 
-// ====== Static files ======
-app.use(express.static('public'));
-
-// ====== Routers ======
-app.use(authRouter);
+// Routers
 app.use(suggestQuestionRouter);
+app.use(authRouter);
 app.use(aiFeedbackRouter);
 app.use(summarizeRoute);
 app.use(analyticsRouter);
 app.use(transcriptsRouter);
 app.use(conversationsRouter);
 app.use(tenantsRouter);
+app.use(wsTokenRouter);
 
-// ===== Health endpoint =====
-app.get('/api/health', (req, res) => {
-  res.json({ status: "ok" });
-});
+// SSE (live AI-suggesties)
+suggestionsSSE(app);
 
-// ===== Deepgram token endpoint =====
-app.post('/api/deepgram-token', async (req, res) => {
-  try {
-    const response = await fetch(
-      `https://api.deepgram.com/v1/auth/grant`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Token ${DG_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ scopes: ["listen:stream"] }),
-      }
-    );
-    if (!response.ok) {
-      const text = await response.text();
-      return res.status(500).json({ error: `Deepgram error: ${text}` });
-    }
-    const json = await response.json();
-    res.json({ token: json.access_token || json.token });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// Health
+app.get('/healthz', (_, res) => res.json({ ok: true }));
 
-// ===== Live transcript endpoint (optioneel, debugging/logging) =====
-app.post('/api/live-transcript', (req, res) => {
-  const { userId, tenantId, transcript, isFinal, ts } = req.body;
-  res.json({ status: 'ok', received: transcript });
-});
+// Error handler
+app.use(errorHandler);
 
-// ===== Server starten =====
-app.listen(PORT, () => {
+// WS Bridge (browser mic -> server -> Deepgram EU)
+initMicBridge(server);
+
+server.listen(PORT, () => {
   console.log(`🚀 Backend draait op http://localhost:${PORT}`);
 });
