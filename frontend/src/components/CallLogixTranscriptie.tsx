@@ -6,11 +6,9 @@ import { makeEventStream } from "../lib/eventStream";
 function SuggestionFeedback({
   suggestion,
   conversationId,
-  userId,
 }: {
   suggestion: { id?: string; text: string };
   conversationId: string;
-  userId: string;
 }) {
   const [feedback, setFeedback] = useState<null | "good" | "bad">(null);
   async function send(rating: "good" | "bad") {
@@ -44,25 +42,11 @@ export default function CallLogixTranscriptie() {
   const lastSuggestionSentRef = useRef("");
   const [conversationId] = useState(() => crypto.randomUUID());
   const { user } = useAuth();
-  const userId = user?.id;
 
   function speakerLabel(speaker: number|null|undefined) {
     return speaker === 0 ? "Agent" : "Gebruiker";
   }
-  function speakerIcon(speaker: number|null|undefined) {
-    return speaker === 0 ? "👨‍💼" : "👤";
-  }
-  function parseLine(line: string) {
-    if (!line) return { label: "", text: "", speaker: 0 };
-    const [prefix, speakerStr] = line.split("|||");
-    const splitIdx = prefix.indexOf(": ");
-    const label = splitIdx >= 0 ? prefix.slice(0, splitIdx) : "Onbekend";
-    const text = splitIdx >= 0 ? prefix.slice(splitIdx + 2) : prefix;
-    const speaker = Number(speakerStr ?? 0);
-    return { label, text, speaker };
-  }
 
-  // AI suggesties via SSE (leest uit DB)
   useEffect(() => {
     const stop = makeEventStream(
       `${import.meta.env.VITE_API_BASE_URL}/api/stream/suggestions?conversation_id=${conversationId}`,
@@ -87,13 +71,10 @@ export default function CallLogixTranscriptie() {
 
   const startRecording = async () => {
     setTranscript([]); setInterim(""); setSuggestions([]); setRecording(true);
-
-    // haal WS token op
     const { token } = await api.wsToken();
 
-    // bouw WS URL naar backend bridge
-    const base = import.meta.env.VITE_API_BASE_URL;         // bv. https://api.mijndomein.nl
-    const wsBase = base.replace(/^http/i, 'ws');            // wss://api.mijndomein.nl
+    const base = import.meta.env.VITE_API_BASE_URL;
+    const wsBase = base.replace(/^http/i, 'ws');
     const wsUrl = `${wsBase}/ws/mic?conversation_id=${conversationId}&token=${encodeURIComponent(token)}`;
 
     wsRef.current = new WebSocket(wsUrl);
@@ -147,83 +128,58 @@ export default function CallLogixTranscriptie() {
   };
 
   return (
-    <main className="min-h-screen bg-calllogix-dark px-2 py-8">
+    <main className="min-h-screen px-2 py-8">
       <div className="max-w-5xl mx-auto flex flex-col sm:flex-row gap-8 items-stretch">
-        <section className="flex-1 bg-calllogix-card rounded-3xl shadow-2xl p-8 border border-calllogix-primary/30 flex flex-col">
-          <header className="mb-8">
-            <h2 className="text-3xl font-black text-calllogix-primary drop-shadow">Live Transcriptie</h2>
-          </header>
-          <div className="flex-1 flex flex-col rounded-xl bg-calllogix-dark min-h-[160px] p-2 md:p-6 shadow-inner gap-2">
+        <section className="flex-1 rounded-3xl p-8 flex flex-col">
+          <header className="mb-8"><h2 className="text-3xl font-black">Live Transcriptie</h2></header>
+          <div className="flex-1 flex flex-col rounded-xl min-h-[160px] p-2 md:p-6 gap-2">
             {transcript.length === 0 && (<div className="opacity-60 italic">Nog geen transcriptie...</div>)}
             {transcript.map((regel, i) => {
-              const { label, text, speaker } = (() => {
-                const [prefix, speakerStr] = regel.split("|||");
-                const splitIdx = prefix.indexOf(": "); const label = splitIdx>=0?prefix.slice(0,splitIdx):"Onbekend";
-                const text = splitIdx>=0?prefix.slice(splitIdx+2):prefix; const speaker = Number(speakerStr ?? 0);
-                return { label, text, speaker };
-              })();
-              if (!text) return null;
+              const [prefix, speakerStr] = regel.split("|||");
+              const splitIdx = prefix.indexOf(": "); 
+              const label = splitIdx>=0?prefix.slice(0,splitIdx):"Onbekend";
+              const text = splitIdx>=0?prefix.slice(splitIdx+2):prefix; 
+              const speaker = Number(speakerStr ?? 0);
               const isAgent = label === "Agent";
-              const roleClass = isAgent ? "bg-calllogix-primary/90 text-calllogix-text" : "bg-calllogix-accent/90 text-calllogix-dark";
-              const badgeClass = isAgent ? "bg-calllogix-primary text-calllogix-text" : "bg-calllogix-accent text-calllogix-dark";
-              const icon = isAgent ? "👨‍💼" : "👤";
               return (
-                <div key={i} className={`flex items-start gap-3 rounded-2xl p-4 shadow-inner ${roleClass}`} style={{maxWidth:"90%",alignSelf:isAgent?"flex-start":"flex-end"}}>
-                  <span className={`px-3 py-1 rounded-xl text-xs font-bold shadow flex items-center gap-1 ${badgeClass}`}>
-                    <span>{icon}</span><span>{label}</span>
-                  </span>
+                <div key={i} className={`flex items-start gap-3 rounded-2xl p-4 ${isAgent?'bg-green-100':'bg-blue-100'}`} style={{maxWidth:"90%",alignSelf:isAgent?"flex-start":"flex-end"}}>
+                  <span className={`px-3 py-1 rounded-xl text-xs font-bold`}>{isAgent?'👨‍💼 Agent':'👤 Gebruiker'}</span>
                   <span className="whitespace-pre-line break-words text-base font-mono">{text}</span>
                 </div>
               );
             })}
             {interim && (() => {
               const [prefix, speakerStr] = interim.split("|||");
-              const splitIdx = prefix.indexOf(": "); const label = splitIdx>=0?prefix.slice(0,splitIdx):"Onbekend";
-              const text = splitIdx>=0?prefix.slice(splitIdx+2):prefix; const speaker = Number(speakerStr ?? 0);
+              const splitIdx = prefix.indexOf(": "); 
+              const label = splitIdx>=0?prefix.slice(0,splitIdx):"Onbekend";
+              const text = splitIdx>=0?prefix.slice(splitIdx+2):prefix; 
               const isAgent = label === "Agent";
-              const badgeClass = isAgent ? "bg-calllogix-primary text-calllogix-text" : "bg-calllogix-accent text-calllogix-dark";
-              const icon = isAgent ? "👨‍💼" : "👤";
               return (
-                <div className="flex items-start gap-3 rounded-2xl p-4 border-dashed border-2 border-calllogix-accent/60 opacity-70" style={{maxWidth:"90%",alignSelf:isAgent?"flex-start":"flex-end"}}>
-                  <span className={`px-3 py-1 rounded-xl text-xs font-bold shadow flex items-center gap-1 ${badgeClass}`}>
-                    <span>{icon}</span><span>{label}</span>
-                  </span>
+                <div className={`flex items-start gap-3 rounded-2xl p-4 border-dashed border-2 opacity-70 ${isAgent?'border-green-400':'border-blue-400'}`} style={{maxWidth:"90%",alignSelf:isAgent?"flex-start":"flex-end"}}>
+                  <span className={`px-3 py-1 rounded-xl text-xs font-bold`}>{isAgent?'👨‍💼 Agent':'👤 Gebruiker'}</span>
                   <span className="whitespace-pre-line break-words text-base font-mono animate-pulse">{text}</span>
                 </div>
               );
             })()}
           </div>
           <div className="flex gap-3 mt-6 justify-center">
-            <button className={`px-5 py-2 rounded-xl font-bold transition shadow ${recording?"bg-calllogix-primary/40 text-calllogix-text cursor-not-allowed":"bg-calllogix-accent text-calllogix-dark hover:bg-calllogix-primary hover:text-calllogix-text"}`} onClick={startRecording} disabled={recording}>
-              <span className="font-black text-lg">●</span> Start
-            </button>
-            <button className={`px-5 py-2 rounded-xl font-bold transition shadow ${!recording?"bg-calllogix-primary/40 text-calllogix-text cursor-not-allowed":"bg-calllogix-primary text-calllogix-text hover:bg-calllogix-accent hover:text-calllogix-dark"}`} onClick={stopRecording} disabled={!recording}>
-              ■ Stop
-            </button>
-          </div>
-          <div className="text-right text-xs text-calllogix-subtext mt-2">
-            {recording ? "Opname loopt..." : "Klik op Start om te beginnen"}
+            <button className={`px-5 py-2 rounded-xl font-bold ${recording?"opacity-60 cursor-not-allowed":"bg-black text-white"}`} onClick={startRecording} disabled={recording}>● Start</button>
+            <button className={`px-5 py-2 rounded-xl font-bold ${!recording?"opacity-60 cursor-not-allowed":"bg-black text-white"}`} onClick={stopRecording} disabled={!recording}>■ Stop</button>
           </div>
         </section>
 
-        <aside className="w-full sm:w-80 bg-calllogix-card rounded-3xl p-8 border border-calllogix-accent/40 shadow-2xl flex flex-col">
-          <h3 className="text-xl font-bold mb-6 text-calllogix-accent drop-shadow">AI Vraagsuggesties</h3>
+        <aside className="w-full sm:w-80 rounded-3xl p-8 flex flex-col">
+          <h3 className="text-xl font-bold mb-6">AI Vraagsuggesties</h3>
           <ul className="space-y-4 flex-1">
             {suggestions.length === 0 && (<li className="opacity-40">Nog geen suggesties...</li>)}
-            {!userId ? (<li className="text-red-500">Log eerst in om feedback te geven.</li>) :
-              suggestions.map((s, i) => (
-                <li key={i} className="bg-calllogix-dark text-calllogix-accent rounded-2xl p-4 border border-calllogix-primary/30 shadow">
-                  <SuggestionFeedback suggestion={s} conversationId={conversationId} userId={userId} />
-                </li>
-              ))
-            }
+            {suggestions.map((s, i) => (
+              <li key={i} className="rounded-2xl p-4 border">
+                <SuggestionFeedback suggestion={s} conversationId={conversationId} />
+              </li>
+            ))}
           </ul>
         </aside>
       </div>
-
-      <footer className="mt-10 text-center text-calllogix-subtext text-sm">
-        <span className="font-semibold text-calllogix-accent">CallLogix</span> — Powered by Deepgram, OpenAI & Supabase — v1.0 MVP
-      </footer>
     </main>
   );
 }
