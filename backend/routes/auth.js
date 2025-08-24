@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import fetch from 'node-fetch';
 import { supabase } from '../supabaseClient.js';
 
+
 const router = express.Router();
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
