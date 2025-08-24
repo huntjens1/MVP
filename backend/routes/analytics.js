@@ -1,5 +1,6 @@
 import express from 'express';
 import { requireAuth } from '../middlewares/auth.js';
+import { requireRole } from '../middlewares/requireRole.js';
 import { supabase } from '../supabaseClient.js';
 
 const router = express.Router();
