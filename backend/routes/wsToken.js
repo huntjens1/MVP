@@ -4,14 +4,24 @@ import { requireAuth } from '../middlewares/auth.js';
 
 const router = express.Router();
 
-router.post('/api/ws-token', requireAuth, async (req, res) => {
-  const user = req.user; // verwacht {id, tenant_id, role, ...}
-  const token = jwt.sign(
-    { uid: user.id, tenant_id: user.tenant_id },
-    process.env.WS_JWT_SECRET,
-    { algorithm: 'HS256', expiresIn: '10m' }
-  );
-  res.json({ token });
+/**
+ * Geeft een short-lived token terug dat we meesturen naar de /ws/mic connectie.
+ * Vereist ingelogde user (cookie 'auth').
+ */
+router.post('/api/ws-token', requireAuth, (req, res) => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    // Duidelijke fout i.p.v. crash
+    return res.status(500).json({ error: 'JWT_SECRET ontbreekt op de server' });
+  }
+  const payload = {
+    uid: req.user.id,
+    tenant_id: req.user.tenant_id,
+    role: req.user.role || 'support',
+  };
+  // Kort geldige token om risico te beperken
+  const token = jwt.sign(payload, secret, { algorithm: 'HS256', expiresIn: '2m' });
+  return res.json({ token });
 });
 
 export default router;
