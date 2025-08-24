@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import http from 'http';
+import cookieParser from 'cookie-parser';
 
 import suggestQuestionRouter from './routes/suggestQuestion.js';
 import authRouter from './routes/auth.js';
@@ -25,56 +26,41 @@ const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 8080;
 
-/** CORS whitelist */
+// ▶ Railway/NGINX: echte client-IP gebruiken
+app.set('trust proxy', 1);
+
 const allowed = (process.env.ALLOWED_ORIGINS || '')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
+  .split(',').map(s => s.trim()).filter(Boolean);
 
-/** ▶️ Belangrijk op Railway/NGINX/Cloud proxies */
-app.set('trust proxy', 1); // 1 hop is genoeg voor Railway; zet true bij complexere ketens
-
-/** Security headers */
+// Security & basics
 app.use(helmet({ crossOriginResourcePolicy: false }));
-
-/** CORS: alleen whitelisted origins */
-app.use(
-  cors({
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true); // allow curl/postman
-      if (allowed.includes(origin)) return cb(null, true);
-      return cb(new Error('Not allowed by CORS'));
-    },
-    credentials: true,
-  })
-);
-
-/** Body parsing */
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);
+    if (allowed.includes(origin)) return cb(null, true);
+    return cb(new Error('Not allowed by CORS'));
+  },
+  credentials: true
+}));
 app.use(express.json({ limit: '2mb' }));
+app.use(cookieParser());
 
-/** Rate‑limit – skip SSE & WS routes (anders breek je streams) */
-const skipStreaming = (req) =>
-  req.path.startsWith('/ws/') || req.path.startsWith('/api/stream/');
-
-const realIp = (req) =>
-  req.headers['cf-connecting-ip'] ||
-  req.headers['x-real-ip'] ||
-  req.ip;
-
+// Rate-limit (skip SSE & WS)
+const skipStreaming = (req) => req.path.startsWith('/ws/') || req.path.startsWith('/api/stream/');
+const realIp = (req) => req.headers['cf-connecting-ip'] || req.headers['x-real-ip'] || req.ip;
 const limiter = rateLimit({
   windowMs: 60_000,
   max: 120,
-  standardHeaders: true, // RateLimit-* headers
+  standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: realIp,
   skip: skipStreaming,
 });
-
 app.use(limiter);
 
-/** Routers */
+// Routers
 app.use(suggestQuestionRouter);
-app.use(authRouter);
+app.use(authRouter);                 // << login/logout/me hieronder
 app.use(aiFeedbackRouter);
 app.use(summarizeRoute);
 app.use(analyticsRouter);
@@ -83,19 +69,18 @@ app.use(conversationsRouter);
 app.use(tenantsRouter);
 app.use(wsTokenRouter);
 
-/** SSE (live AI-suggesties) */
+// SSE (live AI-suggesties)
 suggestionsSSE(app);
 
-/** Health */
-app.get('/healthz', (_req, res) => res.json({ ok: true }));
+// Health
+app.get('/healthz', (_, res) => res.json({ ok: true }));
 
-/** Error handler (laatste middleware) */
+// Error handler
 app.use(errorHandler);
 
-/** WS Bridge (browser mic -> server -> Deepgram EU) */
+// WS Bridge (browser mic -> server -> Deepgram EU)
 initMicBridge(server);
 
-/** Start */
 server.listen(PORT, () => {
   console.log(`🚀 Backend draait op http://localhost:${PORT}`);
 });
