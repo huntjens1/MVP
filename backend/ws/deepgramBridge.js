@@ -41,7 +41,7 @@ export function initMicBridge(server) {
       if (!dgKey) return reject(socket, 500, 'DEEPGRAM_API_KEY missing');
 
       // NB: model/params NL
-      const dgUrl = 'wss://api.deepgram.com/v1/listen?model=nova-2&language=nl&sample_rate=16000&interim_results=true&punctuate=true&diarize=true';
+      const dgUrl = 'wss://api.deepgram.com/v1/listen?model=nova-3&language=nl&sample_rate=16000&interim_results=true&punctuate=true&diarize=true';
 
       // Complete HTTP upgrade for browser <-> server
       wss.handleUpgrade(req, socket, head, (clientWs) => {
