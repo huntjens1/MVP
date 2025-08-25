@@ -2,6 +2,11 @@ import url from 'node:url';
 import WebSocket, { WebSocketServer } from 'ws';
 import jwt from 'jsonwebtoken';
 
+/**
+ * WebSocket bridge: browser mic (OGG/Opus @ 48kHz) -> server -> Deepgram ASR
+ * Path: /ws/mic?conversation_id=...&token=...
+ * Auth: short-lived JWT in ?token= (zelfde als /api/ws-token)
+ */
 export function initMicBridge(server) {
   const wss = new WebSocketServer({ noServer: true });
 
@@ -16,13 +21,12 @@ export function initMicBridge(server) {
     const { pathname, searchParams } = new url.URL(req.url, `http://${req.headers.host}`);
     if (pathname !== '/ws/mic') return;
 
+    // --- Auth
     const token = searchParams.get('token');
     if (!token) return hardReject(socket, 401, 'Unauthorized');
-
-    let claims;
     try {
-      claims = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
-    } catch (e) {
+      jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+    } catch {
       return hardReject(socket, 401, 'Invalid token');
     }
 
@@ -32,7 +36,7 @@ export function initMicBridge(server) {
     const dgKey = process.env.DEEPGRAM_API_KEY;
     if (!dgKey) return hardReject(socket, 500, 'DEEPGRAM_API_KEY missing');
 
-    // ✅ Opus @ 48kHz + NL + nova-3
+    // ✅ OGG/Opus @ 48 kHz, NL, nova-3
     const dgUrl =
       'wss://api.deepgram.com/v1/listen' +
       '?model=nova-3' +
@@ -45,6 +49,7 @@ export function initMicBridge(server) {
       '&diarize=true' +
       '&smart_format=true';
 
+    // Upgrade client <-> server
     wss.handleUpgrade(req, socket, head, (clientWs) => {
       const dgWs = new WebSocket(dgUrl, {
         headers: { Authorization: `Token ${dgKey}` },
@@ -56,20 +61,24 @@ export function initMicBridge(server) {
       };
 
       dgWs.on('open', () => {
-        // client -> deepgram (binaire opus-chunks)
+        // client -> deepgram (binaire OGG/Opus-chunks)
         clientWs.on('message', (data, isBinary) => {
-          if (dgWs.readyState === WebSocket.OPEN) dgWs.send(data, { binary: isBinary });
+          if (dgWs.readyState === WebSocket.OPEN) {
+            dgWs.send(data, { binary: isBinary });
+          }
         });
 
         clientWs.on('close', () => safeClose());
 
-        // deepgram -> client (json events)
+        // deepgram -> client (JSON events)
         dgWs.on('message', (data) => {
           try { clientWs.send(data); } catch {}
         });
 
-        dgWs.on('error', (err) => {
-          try { clientWs.send(JSON.stringify({ type: 'error', message: 'deepgram_error' })); } catch {}
+        dgWs.on('error', () => {
+          try {
+            clientWs.send(JSON.stringify({ type: 'error', message: 'deepgram_error' }));
+          } catch {}
           safeClose(1011, 'Deepgram error');
         });
 

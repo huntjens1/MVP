@@ -27,18 +27,14 @@ function SuggestionFeedback({
     <div className="flex items-center gap-3 my-1">
       <span className="flex-1">{suggestion.text}</span>
       <button
-        className={`px-2 py-1 rounded-lg ${
-          feedback === "good" ? "bg-green-600 text-white" : "bg-gray-200"
-        }`}
+        className={`px-2 py-1 rounded-lg ${feedback === "good" ? "bg-green-600 text-white" : "bg-gray-200"}`}
         disabled={!!feedback}
         onClick={() => send("good")}
       >
         👍 Goed
       </button>
       <button
-        className={`px-2 py-1 rounded-lg ${
-          feedback === "bad" ? "bg-red-600 text-white" : "bg-gray-200"
-        }`}
+        className={`px-2 py-1 rounded-lg ${feedback === "bad" ? "bg-red-600 text-white" : "bg-gray-200"}`}
         disabled={!!feedback}
         onClick={() => send("bad")}
       >
@@ -54,10 +50,9 @@ export default function CallLogixTranscriptie() {
   const [transcript, setTranscript] = useState<string[]>([]);
   const [interim, setInterim] = useState("");
   const [suggestions, setSuggestions] = useState<{ id?: string; text: string }[]>([]);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const lastSuggestionSentRef = useRef("");
   const sseStopRef = useRef<null | (() => void)>(null);
+  const lastSuggestionSentRef = useRef("");
   const [conversationId] = useState(() => crypto.randomUUID());
   const [wsToken, setWsToken] = useState<string | null>(null);
 
@@ -65,16 +60,14 @@ export default function CallLogixTranscriptie() {
     return speaker === 0 ? "Agent" : "Gebruiker";
   }
 
-  // Zet SSE open zodra we een wsToken hebben
+  // Open SSE zodra we een wsToken hebben
   useEffect(() => {
     if (!wsToken) return;
     if (sseStopRef.current) {
       try { sseStopRef.current(); } catch {}
       sseStopRef.current = null;
     }
-    const url = `${import.meta.env.VITE_API_BASE_URL}/api/stream/suggestions?conversation_id=${conversationId}&token=${encodeURIComponent(
-      wsToken
-    )}`;
+    const url = `${import.meta.env.VITE_API_BASE_URL}/api/stream/suggestions?conversation_id=${conversationId}&token=${encodeURIComponent(wsToken)}`;
     sseStopRef.current = makeEventStream(url, (type, data) => {
       if (type === "suggestions" && data?.suggestions) {
         setSuggestions(data.suggestions.map((t: string) => ({ text: t })));
@@ -102,32 +95,34 @@ export default function CallLogixTranscriptie() {
     setInterim("");
     setSuggestions([]);
     setRecording(true);
+
     const { token } = await api.wsToken();
     setWsToken(token);
 
     const base = import.meta.env.VITE_API_BASE_URL;
     const wsBase = base.replace(/^http/i, "ws");
-    const wsUrl = `${wsBase}/ws/mic?conversation_id=${conversationId}&token=${encodeURIComponent(
-      token
-    )}`;
+    const wsUrl = `${wsBase}/ws/mic?conversation_id=${conversationId}&token=${encodeURIComponent(token)}`;
 
     wsRef.current = new WebSocket(wsUrl);
+
     wsRef.current.onopen = () => {
       navigator.mediaDevices
         .getUserMedia({ audio: { channelCount: 1, sampleRate: 48000 } })
         .then((stream) => {
-          const mr = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
-          mediaRecorderRef.current = mr;
+          // ✅ OGG/Opus container — Deepgram pakt dit als encoding=opus
+          const mr = new MediaRecorder(stream, { mimeType: "audio/ogg;codecs=opus" });
           mr.ondataavailable = async (e) => {
-           if (e.data.size > 0 && wsRef.current?.readyState === 1) {
-             const buf = await e.data.arrayBuffer();
-             wsRef.current.send(buf);
-        }
-      };
-      mr.start(250);
-      wsRef.current!.onclose = () => stream.getTracks().forEach((t) => t.stop());
-    });
-};
+            if (e.data.size > 0 && wsRef.current?.readyState === 1) {
+              const buf = await e.data.arrayBuffer();
+              wsRef.current.send(buf);
+            }
+          };
+          mr.start(250);
+          wsRef.current!.onclose = () => {
+            stream.getTracks().forEach((t) => t.stop());
+          };
+        });
+    };
 
     wsRef.current.onmessage = (event) => {
       try {
@@ -153,9 +148,6 @@ export default function CallLogixTranscriptie() {
 
   const stopRecording = () => {
     setRecording(false);
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
-    }
     wsRef.current?.close();
     if (sseStopRef.current) {
       try { sseStopRef.current(); } catch {}
@@ -191,18 +183,14 @@ export default function CallLogixTranscriptie() {
           </div>
           <div className="flex gap-3 mt-6 justify-center">
             <button
-              className={`px-5 py-2 rounded-xl font-bold ${
-                recording ? "opacity-60 cursor-not-allowed" : "bg-black text-white"
-              }`}
+              className={`px-5 py-2 rounded-xl font-bold ${recording ? "opacity-60 cursor-not-allowed" : "bg-black text-white"}`}
               onClick={startRecording}
               disabled={recording}
             >
               ● Start
             </button>
             <button
-              className={`px-5 py-2 rounded-xl font-bold ${
-                !recording ? "opacity-60 cursor-not-allowed" : "bg-black text-white"
-              }`}
+              className={`px-5 py-2 rounded-xl font-bold ${!recording ? "opacity-60 cursor-not-allowed" : "bg-black text-white"}`}
               onClick={stopRecording}
               disabled={!recording}
             >
