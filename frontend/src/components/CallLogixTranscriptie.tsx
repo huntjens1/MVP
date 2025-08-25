@@ -63,16 +63,10 @@ export default function CallLogixTranscriptie() {
 
   const [conversationId] = useState(() => crypto.randomUUID());
   const [wsToken, setWsToken] = useState<string | null>(null);
+
   const wsRef = useRef<WebSocket | null>(null);
-
-  // SSE (suggestions)
   const sseStopRef = useRef<null | (() => void)>(null);
-
-  // Fallback management
-  const receivedAnyRef = useRef(false);
-  const stopMediaRecorderRef = useRef<null | (() => void)>(null);
   const cleanupPcmRef = useRef<null | (() => void)>(null);
-  const fallbackTimerRef = useRef<number | null>(null);
 
   const lastSuggestionSentRef = useRef("");
 
@@ -118,14 +112,6 @@ export default function CallLogixTranscriptie() {
 
   /* ------------------------------ Audio Helpers ----------------------------- */
 
-  function pickOpusMime(): string | null {
-    const MR: any = (window as any).MediaRecorder;
-    if (!MR) return null;
-    const cands = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/webm"];
-    for (const t of cands) if (MR.isTypeSupported?.(t)) return t;
-    return null;
-  }
-
   // Decode WS event (string | Blob | ArrayBuffer) -> string | null
   async function normalizeWsText(
     data: string | Blob | ArrayBuffer
@@ -164,7 +150,7 @@ export default function CallLogixTranscriptie() {
     }
   }
 
-  // PCM fallback (linear16@16kHz)
+  // PCM pipeline (linear16@16kHz)
   async function startPCM(ws: WebSocket) {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, sampleRate: 48000 },
@@ -222,10 +208,25 @@ export default function CallLogixTranscriptie() {
     };
   }
 
-  async function startWithPCM(token: string, wsBase: string) {
+  /* --------------------------------- Control -------------------------------- */
+
+  const startRecording = async () => {
+    setTranscript([]);
+    setInterim("");
+    setSuggestions([]);
+    setRecording(true);
+
+    const { token } = await api.wsToken();
+    setWsToken(token);
+
+    const base = import.meta.env.VITE_API_BASE_URL as string;
+    const wsBase = base.replace(/^http/i, "ws");
+
+    // DIRECT PCM (linear16) – Opus later weer aanzetten zodra stabiel.
     const pcmUrl = `${wsBase}/ws/mic?conversation_id=${conversationId}&token=${encodeURIComponent(
       token
     )}&codec=linear16`;
+
     wsRef.current = new WebSocket(pcmUrl);
 
     wsRef.current.onopen = async () => {
@@ -235,99 +236,12 @@ export default function CallLogixTranscriptie() {
     wsRef.current.onmessage = async (event) => {
       const text = await normalizeWsText(event.data);
       if (!text) return;
-      receivedAnyRef.current = true;
-      handleAsrJson(text);
-    };
-  }
-
-  /* --------------------------------- Control -------------------------------- */
-
-  const startRecording = async () => {
-    setTranscript([]);
-    setInterim("");
-    setSuggestions([]);
-    setRecording(true);
-    receivedAnyRef.current = false;
-
-    const { token } = await api.wsToken();
-    setWsToken(token);
-
-    const base = import.meta.env.VITE_API_BASE_URL as string;
-    const wsBase = base.replace(/^http/i, "ws");
-
-    // 1) Probeer eerst OPUS (container, codec=opus)
-    const opusUrl = `${wsBase}/ws/mic?conversation_id=${conversationId}&token=${encodeURIComponent(
-      token
-    )}&codec=opus`;
-    wsRef.current = new WebSocket(opusUrl);
-
-    wsRef.current.onopen = async () => {
-      const mime = pickOpusMime();
-      if (!mime) {
-        // Geen MediaRecorder -> PCM fallback
-        wsRef.current?.close();
-        await startWithPCM(token, wsBase);
-        return;
-      }
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: { channelCount: 1, sampleRate: 48000 },
-        });
-        const mr = new MediaRecorder(stream, { mimeType: mime });
-        mr.ondataavailable = async (e) => {
-          if (e.data.size > 0 && wsRef.current?.readyState === 1) {
-            const buf = await e.data.arrayBuffer();
-            wsRef.current.send(buf);
-          }
-        };
-        mr.start(250);
-        stopMediaRecorderRef.current = () => {
-          try {
-            mr.stop();
-          } catch {}
-          try {
-            stream.getTracks().forEach((t) => t.stop());
-          } catch {}
-          stopMediaRecorderRef.current = null;
-        };
-      } catch {
-        // getUserMedia faalt -> PCM fallback
-        wsRef.current?.close();
-        await startWithPCM(token, wsBase);
-        return;
-      }
-
-      // Als er binnen 5s niets terugkomt, switch automatisch naar PCM
-      fallbackTimerRef.current = window.setTimeout(async () => {
-        if (!receivedAnyRef.current) {
-          try {
-            stopMediaRecorderRef.current?.();
-          } catch {}
-          try {
-            wsRef.current?.close();
-          } catch {}
-          await startWithPCM(token, wsBase);
-        }
-      }, 5000);
-    };
-
-    wsRef.current.onmessage = async (event) => {
-      const text = await normalizeWsText(event.data);
-      if (!text) return;
-      receivedAnyRef.current = true;
       handleAsrJson(text);
     };
   };
 
   const stopRecording = () => {
     setRecording(false);
-    if (fallbackTimerRef.current) {
-      clearTimeout(fallbackTimerRef.current);
-      fallbackTimerRef.current = null;
-    }
-    try {
-      stopMediaRecorderRef.current?.();
-    } catch {}
     try {
       cleanupPcmRef.current?.();
     } catch {}
