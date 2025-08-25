@@ -5,8 +5,8 @@ import jwt from 'jsonwebtoken';
 /**
  * WS Bridge naar Deepgram met dynamische codec:
  *   /ws/mic?conversation_id=...&token=...&codec=opus|linear16
- * - codec=opus    -> encoding=opus&sample_rate=48000
- * - codec=linear16-> encoding=linear16&sample_rate=16000
+ * - codec=opus     -> containerized (WebM/OGG/Opus): GEEN encoding/sample_rate in de URL
+ * - codec=linear16 -> raw PCM: encoding=linear16&sample_rate=16000
  */
 export function initMicBridge(server) {
   const wss = new WebSocketServer({ noServer: true });
@@ -22,6 +22,7 @@ export function initMicBridge(server) {
     const { pathname, searchParams } = new url.URL(req.url, `http://${req.headers.host}`);
     if (pathname !== '/ws/mic') return;
 
+    // --- Auth
     const token = searchParams.get('token');
     if (!token) return hardReject(socket, 401, 'Unauthorized');
     try {
@@ -39,17 +40,22 @@ export function initMicBridge(server) {
     const codec = (searchParams.get('codec') || 'opus').toLowerCase();
     const isLinear = codec === 'linear16';
 
-    const dgUrl =
+    // 🔑 Deepgram URL:
+    // - Containerized (Opus/WebM/OGG): géén encoding/sample_rate parameters!
+    // - Raw PCM (linear16): wél encoding + sample_rate
+    const base =
       'wss://api.deepgram.com/v1/listen' +
       `?model=nova-3` +
       `&language=nl` +
-      `&encoding=${isLinear ? 'linear16' : 'opus'}` +
-      `&sample_rate=${isLinear ? '16000' : '48000'}` +
       `&channels=1` +
       `&interim_results=true` +
       `&punctuate=true` +
       `&diarize=true` +
       `&smart_format=true`;
+
+    const dgUrl = isLinear
+      ? `${base}&encoding=linear16&sample_rate=16000`
+      : base; // containerized Opus -> laat Deepgram zelf detecteren
 
     wss.handleUpgrade(req, socket, head, (clientWs) => {
       const dgWs = new WebSocket(dgUrl, {
@@ -62,11 +68,15 @@ export function initMicBridge(server) {
       };
 
       dgWs.on('open', () => {
+        // client -> Deepgram
         clientWs.on('message', (data, isBinary) => {
-          if (dgWs.readyState === WebSocket.OPEN) dgWs.send(data, { binary: isBinary });
+          if (dgWs.readyState === WebSocket.OPEN) {
+            dgWs.send(data, { binary: isBinary });
+          }
         });
         clientWs.on('close', () => safeClose());
 
+        // Deepgram -> client
         dgWs.on('message', (data) => {
           try { clientWs.send(data); } catch {}
         });
