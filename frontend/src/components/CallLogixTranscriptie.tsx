@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import api from "../api";
 import { makeEventStream } from "../lib/eventStream";
 
@@ -56,30 +56,37 @@ export default function CallLogixTranscriptie() {
   const [suggestions, setSuggestions] = useState<{ id?: string; text: string }[]>([]);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const sseStopRef = useRef<null | (() => void)>(null);
   const lastSuggestionSentRef = useRef("");
+  const sseStopRef = useRef<null | (() => void)>(null);
   const [conversationId] = useState(() => crypto.randomUUID());
+  const [wsToken, setWsToken] = useState<string | null>(null);
 
   function speakerLabel(speaker: number | null | undefined) {
     return speaker === 0 ? "Agent" : "Gebruiker";
   }
 
-  // Open/close SSE met token (geen cookies nodig)
-  function openSuggestionsStream(token: string) {
-    // sluit oude stream als die bestond
+  // Zet SSE open zodra we een wsToken hebben
+  useEffect(() => {
+    if (!wsToken) return;
     if (sseStopRef.current) {
       try { sseStopRef.current(); } catch {}
       sseStopRef.current = null;
     }
     const url = `${import.meta.env.VITE_API_BASE_URL}/api/stream/suggestions?conversation_id=${conversationId}&token=${encodeURIComponent(
-      token
+      wsToken
     )}`;
     sseStopRef.current = makeEventStream(url, (type, data) => {
       if (type === "suggestions" && data?.suggestions) {
         setSuggestions(data.suggestions.map((t: string) => ({ text: t })));
       }
     });
-  }
+    return () => {
+      if (sseStopRef.current) {
+        try { sseStopRef.current(); } catch {}
+        sseStopRef.current = null;
+      }
+    };
+  }, [conversationId, wsToken]);
 
   async function getSuggestions(currentTranscript: string) {
     if (!currentTranscript.trim() || currentTranscript.trim() === lastSuggestionSentRef.current) return;
@@ -87,7 +94,7 @@ export default function CallLogixTranscriptie() {
     try {
       const data = await api.suggestOnDemand(currentTranscript);
       if (data.suggestions) setSuggestions(data.suggestions);
-    } catch { /* ignore */ }
+    } catch {}
   }
 
   const startRecording = async () => {
@@ -95,14 +102,14 @@ export default function CallLogixTranscriptie() {
     setInterim("");
     setSuggestions([]);
     setRecording(true);
-
-    // Haal short-lived token op en gebruik die voor WS én SSE (om third‑party cookies te omzeilen)
     const { token } = await api.wsToken();
-    openSuggestionsStream(token);
+    setWsToken(token);
 
     const base = import.meta.env.VITE_API_BASE_URL;
     const wsBase = base.replace(/^http/i, "ws");
-    const wsUrl = `${wsBase}/ws/mic?conversation_id=${conversationId}&token=${encodeURIComponent(token)}`;
+    const wsUrl = `${wsBase}/ws/mic?conversation_id=${conversationId}&token=${encodeURIComponent(
+      token
+    )}`;
 
     wsRef.current = new WebSocket(wsUrl);
     wsRef.current.onopen = () => {
@@ -140,9 +147,7 @@ export default function CallLogixTranscriptie() {
             setInterim(tekst ? `${speakerLabel(0)}: ${tekst}` : "");
           }
         }
-      } catch {
-        // negeer parse fouten (kan non-json ping zijn)
-      }
+      } catch {}
     };
   };
 
@@ -170,30 +175,17 @@ export default function CallLogixTranscriptie() {
               <div className="opacity-60 italic">Nog geen transcriptie...</div>
             )}
             {transcript.map((regel, i) => (
-              <div
-                key={i}
-                className="flex items-start gap-3 rounded-2xl p-4 bg-green-100"
-                style={{ maxWidth: "90%", alignSelf: "flex-start" }}
-              >
-                <span className="px-3 py-1 rounded-xl text-xs font-bold">
-                  👨‍💼 Agent
-                </span>
-                <span className="whitespace-pre-line break-words text-base font-mono">
-                  {regel}
-                </span>
+              <div key={i} className="flex items-start gap-3 rounded-2xl p-4 bg-green-100"
+                   style={{ maxWidth: "90%", alignSelf: "flex-start" }}>
+                <span className="px-3 py-1 rounded-xl text-xs font-bold">👨‍💼 Agent</span>
+                <span className="whitespace-pre-line break-words text-base font-mono">{regel}</span>
               </div>
             ))}
             {interim && (
-              <div
-                className="flex items-start gap-3 rounded-2xl p-4 border-dashed border-2 opacity-70 border-green-400"
-                style={{ maxWidth: "90%", alignSelf: "flex-start" }}
-              >
-                <span className="px-3 py-1 rounded-xl text-xs font-bold">
-                  👨‍💼 Agent
-                </span>
-                <span className="whitespace-pre-line break-words text-base font-mono animate-pulse">
-                  {interim}
-                </span>
+              <div className="flex items-start gap-3 rounded-2xl p-4 border-dashed border-2 opacity-70 border-green-400"
+                   style={{ maxWidth: "90%", alignSelf: "flex-start" }}>
+                <span className="px-3 py-1 rounded-xl text-xs font-bold">👨‍💼 Agent</span>
+                <span className="whitespace-pre-line break-words text-base font-mono animate-pulse">{interim}</span>
               </div>
             )}
           </div>
