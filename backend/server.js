@@ -26,41 +26,49 @@ const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 8080;
 
-// ▶ Railway/NGINX/Cloud: echte client-IP gebruiken
+// Gebruik echte client-IP achter proxy (Railway/NGINX)
 app.set('trust proxy', 1);
 
 // CORS whitelist
 const allowed = (process.env.ALLOWED_ORIGINS || '')
-  .split(',').map(s => s.trim()).filter(Boolean);
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
 
 // Security + basics
 app.use(helmet({ crossOriginResourcePolicy: false }));
-app.use(cors({
-  origin: (origin, cb) => {
-    if (!origin) return cb(null, true);           // curl/postman
-    if (allowed.includes(origin)) return cb(null, true);
-    return cb(new Error('Not allowed by CORS'));
-  },
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true); // curl/postman
+      if (allowed.includes(origin)) return cb(null, true);
+      return cb(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+    // ➜ Autoriseer Bearer headers voor token-based auth (SSE/analytics)
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  })
+);
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
 
-// Rate‑limit — **IPv6 safe** en geen throttle op streams
-const skipStreaming = req => req.path.startsWith('/ws/') || req.path.startsWith('/api/stream/');
+// Rate‑limit — IPv6 safe en geen throttle op streams
+const skipStreaming = req =>
+  req.path.startsWith('/ws/') || req.path.startsWith('/api/stream/');
 const limiter = rateLimit({
   windowMs: 60_000,
   max: 120,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => ipKeyGenerator(req),     // ✅ IPv4/IPv6 + XFF aware
+  keyGenerator: req => ipKeyGenerator(req), // IPv4/IPv6 + XFF aware
   skip: skipStreaming,
 });
 app.use(limiter);
 
 // Routers
 app.use(suggestQuestionRouter);
-app.use(authRouter);                 // /api/login, /api/logout, /api/me
+app.use(authRouter); // /api/login, /api/logout, /api/me
 app.use(aiFeedbackRouter);
 app.use(summarizeRoute);
 app.use(analyticsRouter);
@@ -78,7 +86,7 @@ app.get('/healthz', (_, res) => res.json({ ok: true }));
 // Errors (laatste)
 app.use(errorHandler);
 
-// WS Bridge (browser mic -> server -> Deepgram EU)
+// WS Bridge (browser mic -> server -> Deepgram)
 initMicBridge(server);
 
 // Start

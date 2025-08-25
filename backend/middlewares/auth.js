@@ -1,12 +1,21 @@
 import jwt from 'jsonwebtoken';
 
-/**
- * Leest onze HttpOnly cookie "auth" en zet req.user = { id, tenant_id, role }.
- * Gebruik: router.get('/path', requireAuth, handler)
- */
 export function requireAuth(req, res, next) {
   try {
-    const raw = req.cookies?.auth;
+    // 1) Cookie (oude weg)
+    let raw = req.cookies?.auth;
+
+    // 2) Bearer header (Authorization: Bearer <jwt>)
+    if (!raw) {
+      const h = req.get('authorization') || '';
+      if (h.toLowerCase().startsWith('bearer ')) raw = h.slice(7).trim();
+    }
+
+    // 3) Query token (?token=...)
+    if (!raw && typeof req.query?.token === 'string') {
+      raw = req.query.token;
+    }
+
     if (!raw) return res.status(401).json({ error: 'Unauthorized' });
 
     const payload = jwt.verify(raw, process.env.JWT_SECRET, { algorithms: ['HS256'] });

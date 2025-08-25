@@ -56,6 +56,7 @@ export default function CallLogixTranscriptie() {
   const [suggestions, setSuggestions] = useState<{ id?: string; text: string }[]>([]);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const sseStopRef = useRef<null | (() => void)>(null);
   const lastSuggestionSentRef = useRef("");
   const [conversationId] = useState(() => crypto.randomUUID());
 
@@ -63,29 +64,30 @@ export default function CallLogixTranscriptie() {
     return speaker === 0 ? "Agent" : "Gebruiker";
   }
 
-  useEffect(() => {
-    const stop = makeEventStream(
-      `${import.meta.env.VITE_API_BASE_URL}/api/stream/suggestions?conversation_id=${conversationId}`,
-      (type, data) => {
-        if (type === "suggestions" && data?.suggestions) {
-          setSuggestions(data.suggestions.map((t: string) => ({ text: t })));
-        }
+  // Open/close SSE met token (geen cookies nodig)
+  function openSuggestionsStream(token: string) {
+    // sluit oude stream als die bestond
+    if (sseStopRef.current) {
+      try { sseStopRef.current(); } catch {}
+      sseStopRef.current = null;
+    }
+    const url = `${import.meta.env.VITE_API_BASE_URL}/api/stream/suggestions?conversation_id=${conversationId}&token=${encodeURIComponent(
+      token
+    )}`;
+    sseStopRef.current = makeEventStream(url, (type, data) => {
+      if (type === "suggestions" && data?.suggestions) {
+        setSuggestions(data.suggestions.map((t: string) => ({ text: t })));
       }
-    );
-    return stop;
-  }, [conversationId]);
+    });
+  }
 
   async function getSuggestions(currentTranscript: string) {
-    if (
-      !currentTranscript.trim() ||
-      currentTranscript.trim() === lastSuggestionSentRef.current
-    )
-      return;
+    if (!currentTranscript.trim() || currentTranscript.trim() === lastSuggestionSentRef.current) return;
     lastSuggestionSentRef.current = currentTranscript.trim();
     try {
       const data = await api.suggestOnDemand(currentTranscript);
       if (data.suggestions) setSuggestions(data.suggestions);
-    } catch {}
+    } catch { /* ignore */ }
   }
 
   const startRecording = async () => {
@@ -93,13 +95,14 @@ export default function CallLogixTranscriptie() {
     setInterim("");
     setSuggestions([]);
     setRecording(true);
+
+    // Haal short-lived token op en gebruik die voor WS én SSE (om third‑party cookies te omzeilen)
     const { token } = await api.wsToken();
+    openSuggestionsStream(token);
 
     const base = import.meta.env.VITE_API_BASE_URL;
     const wsBase = base.replace(/^http/i, "ws");
-    const wsUrl = `${wsBase}/ws/mic?conversation_id=${conversationId}&token=${encodeURIComponent(
-      token
-    )}`;
+    const wsUrl = `${wsBase}/ws/mic?conversation_id=${conversationId}&token=${encodeURIComponent(token)}`;
 
     wsRef.current = new WebSocket(wsUrl);
     wsRef.current.onopen = () => {
@@ -137,7 +140,9 @@ export default function CallLogixTranscriptie() {
             setInterim(tekst ? `${speakerLabel(0)}: ${tekst}` : "");
           }
         }
-      } catch {}
+      } catch {
+        // negeer parse fouten (kan non-json ping zijn)
+      }
     };
   };
 
@@ -147,6 +152,10 @@ export default function CallLogixTranscriptie() {
       mediaRecorderRef.current.stop();
     }
     wsRef.current?.close();
+    if (sseStopRef.current) {
+      try { sseStopRef.current(); } catch {}
+      sseStopRef.current = null;
+    }
   };
 
   return (
@@ -191,9 +200,7 @@ export default function CallLogixTranscriptie() {
           <div className="flex gap-3 mt-6 justify-center">
             <button
               className={`px-5 py-2 rounded-xl font-bold ${
-                recording
-                  ? "opacity-60 cursor-not-allowed"
-                  : "bg-black text-white"
+                recording ? "opacity-60 cursor-not-allowed" : "bg-black text-white"
               }`}
               onClick={startRecording}
               disabled={recording}
@@ -202,9 +209,7 @@ export default function CallLogixTranscriptie() {
             </button>
             <button
               className={`px-5 py-2 rounded-xl font-bold ${
-                !recording
-                  ? "opacity-60 cursor-not-allowed"
-                  : "bg-black text-white"
+                !recording ? "opacity-60 cursor-not-allowed" : "bg-black text-white"
               }`}
               onClick={stopRecording}
               disabled={!recording}
