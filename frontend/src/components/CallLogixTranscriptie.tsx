@@ -113,21 +113,21 @@ export default function CallLogixTranscriptie() {
 
     wsRef.current = new WebSocket(wsUrl);
     wsRef.current.onopen = () => {
-      navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-        const mr = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
-        mediaRecorderRef.current = mr;
-        mr.ondataavailable = async (e) => {
-          if (e.data.size > 0 && wsRef.current?.readyState === 1) {
-            const buf = await e.data.arrayBuffer();
-            wsRef.current.send(buf);
-          }
-        };
-        mr.start(250);
-        wsRef.current!.onclose = () => {
-          stream.getTracks().forEach((t) => t.stop());
-        };
-      });
-    };
+      navigator.mediaDevices
+        .getUserMedia({ audio: { channelCount: 1, sampleRate: 48000 } })
+        .then((stream) => {
+          const mr = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+          mediaRecorderRef.current = mr;
+          mr.ondataavailable = async (e) => {
+           if (e.data.size > 0 && wsRef.current?.readyState === 1) {
+             const buf = await e.data.arrayBuffer();
+             wsRef.current.send(buf);
+        }
+      };
+      mr.start(250);
+      wsRef.current!.onclose = () => stream.getTracks().forEach((t) => t.stop());
+    });
+};
 
     wsRef.current.onmessage = (event) => {
       try {
