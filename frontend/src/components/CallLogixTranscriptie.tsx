@@ -1,6 +1,8 @@
-import { useRef, useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import api from "../api";
 import { makeEventStream } from "../lib/eventStream";
+
+/* ----------------------------- UI subcomponent ----------------------------- */
 
 function SuggestionFeedback({
   suggestion,
@@ -10,6 +12,7 @@ function SuggestionFeedback({
   conversationId: string;
 }) {
   const [feedback, setFeedback] = useState<null | "good" | "bad">(null);
+
   async function send(rating: "good" | "bad") {
     setFeedback(rating);
     try {
@@ -20,60 +23,72 @@ function SuggestionFeedback({
         feedback: rating === "good" ? 1 : -1,
       });
     } catch {
-      alert("Feedback opslaan mislukt!");
+      alert("Feedback opslaan mislukt.");
     }
   }
+
   return (
     <div className="flex items-center gap-3 my-1">
       <span className="flex-1">{suggestion.text}</span>
       <button
-        className={`px-2 py-1 rounded-lg ${feedback === "good" ? "bg-green-600 text-white" : "bg-gray-200"}`}
+        className={`px-2 py-1 rounded-lg ${
+          feedback === "good" ? "bg-green-600 text-white" : "bg-gray-200"
+        }`}
         disabled={!!feedback}
         onClick={() => send("good")}
       >
         👍 Goed
       </button>
       <button
-        className={`px-2 py-1 rounded-lg ${feedback === "bad" ? "bg-red-600 text-white" : "bg-gray-200"}`}
+        className={`px-2 py-1 rounded-lg ${
+          feedback === "bad" ? "bg-red-600 text-white" : "bg-gray-200"
+        }`}
         disabled={!!feedback}
         onClick={() => send("bad")}
       >
         👎 Niet bruikbaar
       </button>
-      {feedback && <span className="text-green-600 ml-3">Feedback ontvangen!</span>}
+      {feedback && <span className="text-green-600 ml-3">Bedankt!</span>}
     </div>
   );
 }
+
+/* ---------------------------------- Page ---------------------------------- */
 
 export default function CallLogixTranscriptie() {
   const [recording, setRecording] = useState(false);
   const [transcript, setTranscript] = useState<string[]>([]);
   const [interim, setInterim] = useState("");
   const [suggestions, setSuggestions] = useState<{ id?: string; text: string }[]>([]);
-  const wsRef = useRef<WebSocket | null>(null);
-  const sseStopRef = useRef<null | (() => void)>(null);
-  const lastSuggestionSentRef = useRef("");
+
   const [conversationId] = useState(() => crypto.randomUUID());
   const [wsToken, setWsToken] = useState<string | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
-  // interne refs voor fallback
+  // SSE (suggestions)
+  const sseStopRef = useRef<null | (() => void)>(null);
+
+  // Fallback management
   const receivedAnyRef = useRef(false);
   const stopMediaRecorderRef = useRef<null | (() => void)>(null);
   const cleanupPcmRef = useRef<null | (() => void)>(null);
   const fallbackTimerRef = useRef<number | null>(null);
 
-  function speakerLabel(speaker: number | null | undefined) {
-    return speaker === 0 ? "Agent" : "Gebruiker";
-  }
+  const lastSuggestionSentRef = useRef("");
 
-  // SSE openen met token
+  /* ----------------------------- Suggestions SSE ---------------------------- */
+
   useEffect(() => {
     if (!wsToken) return;
     if (sseStopRef.current) {
-      try { sseStopRef.current(); } catch {}
+      try {
+        sseStopRef.current();
+      } catch {}
       sseStopRef.current = null;
     }
-    const url = `${import.meta.env.VITE_API_BASE_URL}/api/stream/suggestions?conversation_id=${conversationId}&token=${encodeURIComponent(wsToken)}`;
+    const url = `${import.meta.env.VITE_API_BASE_URL}/api/stream/suggestions?conversation_id=${conversationId}&token=${encodeURIComponent(
+      wsToken
+    )}`;
     sseStopRef.current = makeEventStream(url, (type, data) => {
       if (type === "suggestions" && data?.suggestions) {
         setSuggestions(data.suggestions.map((t: string) => ({ text: t })));
@@ -81,33 +96,79 @@ export default function CallLogixTranscriptie() {
     });
     return () => {
       if (sseStopRef.current) {
-        try { sseStopRef.current(); } catch {}
+        try {
+          sseStopRef.current();
+        } catch {}
         sseStopRef.current = null;
       }
     };
   }, [conversationId, wsToken]);
 
   async function getSuggestions(currentTranscript: string) {
-    if (!currentTranscript.trim() || currentTranscript.trim() === lastSuggestionSentRef.current) return;
-    lastSuggestionSentRef.current = currentTranscript.trim();
+    const msg = currentTranscript.trim();
+    if (!msg || msg === lastSuggestionSentRef.current) return;
+    lastSuggestionSentRef.current = msg;
     try {
-      const data = await api.suggestOnDemand(currentTranscript);
-      if (data.suggestions) setSuggestions(data.suggestions);
-    } catch {}
+      const data = await api.suggestOnDemand(msg);
+      if (data?.suggestions) setSuggestions(data.suggestions);
+    } catch {
+      /* ignore */
+    }
   }
 
-  // pick beste container voor Opus
+  /* ------------------------------ Audio Helpers ----------------------------- */
+
   function pickOpusMime(): string | null {
-    const cands = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/webm"];
     const MR: any = (window as any).MediaRecorder;
     if (!MR) return null;
+    const cands = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/webm"];
     for (const t of cands) if (MR.isTypeSupported?.(t)) return t;
     return null;
   }
 
-  // ---- PCM pipeline (fallback) ----
+  // Decode WS event (string | Blob | ArrayBuffer) -> string | null
+  async function normalizeWsText(
+    data: string | Blob | ArrayBuffer
+  ): Promise<string | null> {
+    try {
+      if (typeof data === "string") return data;
+      if (data instanceof Blob) return await data.text();
+      if (data instanceof ArrayBuffer) return new TextDecoder().decode(data);
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
+  // Common ASR JSON handler
+  function handleAsrJson(text: string) {
+    try {
+      const json = JSON.parse(text);
+      const alt = json?.channel?.alternatives?.[0];
+      if (alt?.transcript !== undefined) {
+        const t = alt.transcript?.trim() || "";
+        if (json.is_final && t) {
+          setTranscript((prev) => {
+            const regel = `Agent: ${t}`;
+            const nieuw = [...prev, regel];
+            getSuggestions(nieuw.join("\n"));
+            return nieuw;
+          });
+          setInterim("");
+        } else if (!json.is_final) {
+          setInterim(t ? `Agent: ${t}` : "");
+        }
+      }
+    } catch {
+      // heartbeat/non-JSON -> negeren
+    }
+  }
+
+  // PCM fallback (linear16@16kHz)
   async function startPCM(ws: WebSocket) {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, sampleRate: 48000 } });
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, sampleRate: 48000 },
+    });
     const audioCtx = new AudioContext({ sampleRate: 48000 });
     const source = audioCtx.createMediaStreamSource(stream);
     const proc = audioCtx.createScriptProcessor(4096, 1, 1);
@@ -129,8 +190,12 @@ export default function CallLogixTranscriptie() {
       const ratio = inRate / outRate;
       const newLen = Math.round(buffer.length / ratio);
       const out = new Float32Array(newLen);
-      let oi = 0, ii = 0;
-      while (oi < newLen) { out[oi++] = buffer[Math.floor(ii)]; ii += ratio; }
+      let oi = 0,
+        ii = 0;
+      while (oi < newLen) {
+        out[oi++] = buffer[Math.floor(ii)];
+        ii += ratio;
+      }
       return out;
     }
 
@@ -143,37 +208,71 @@ export default function CallLogixTranscriptie() {
     };
 
     cleanupPcmRef.current = () => {
-      try { proc.disconnect(); source.disconnect(); } catch {}
-      try { stream.getTracks().forEach(t => t.stop()); } catch {}
-      try { audioCtx.close(); } catch {}
+      try {
+        proc.disconnect();
+        source.disconnect();
+      } catch {}
+      try {
+        stream.getTracks().forEach((t) => t.stop());
+      } catch {}
+      try {
+        audioCtx.close();
+      } catch {}
       cleanupPcmRef.current = null;
     };
   }
 
+  async function startWithPCM(token: string, wsBase: string) {
+    const pcmUrl = `${wsBase}/ws/mic?conversation_id=${conversationId}&token=${encodeURIComponent(
+      token
+    )}&codec=linear16`;
+    wsRef.current = new WebSocket(pcmUrl);
+
+    wsRef.current.onopen = async () => {
+      await startPCM(wsRef.current!);
+    };
+
+    wsRef.current.onmessage = async (event) => {
+      const text = await normalizeWsText(event.data);
+      if (!text) return;
+      receivedAnyRef.current = true;
+      handleAsrJson(text);
+    };
+  }
+
+  /* --------------------------------- Control -------------------------------- */
+
   const startRecording = async () => {
-    setTranscript([]); setInterim(""); setSuggestions([]); setRecording(true);
+    setTranscript([]);
+    setInterim("");
+    setSuggestions([]);
+    setRecording(true);
     receivedAnyRef.current = false;
 
     const { token } = await api.wsToken();
     setWsToken(token);
 
-    const base = import.meta.env.VITE_API_BASE_URL;
+    const base = import.meta.env.VITE_API_BASE_URL as string;
     const wsBase = base.replace(/^http/i, "ws");
 
-    // 1) Probeer eerst OPUS (codec=opus)
-    const opusUrl = `${wsBase}/ws/mic?conversation_id=${conversationId}&token=${encodeURIComponent(token)}&codec=opus`;
+    // 1) Probeer eerst OPUS (container, codec=opus)
+    const opusUrl = `${wsBase}/ws/mic?conversation_id=${conversationId}&token=${encodeURIComponent(
+      token
+    )}&codec=opus`;
     wsRef.current = new WebSocket(opusUrl);
 
     wsRef.current.onopen = async () => {
       const mime = pickOpusMime();
       if (!mime) {
-        // geen MediaRecorder -> direct PCM fallback
+        // Geen MediaRecorder -> PCM fallback
         wsRef.current?.close();
         await startWithPCM(token, wsBase);
         return;
       }
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, sampleRate: 48000 } });
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { channelCount: 1, sampleRate: 48000 },
+        });
         const mr = new MediaRecorder(stream, { mimeType: mime });
         mr.ondataavailable = async (e) => {
           if (e.data.size > 0 && wsRef.current?.readyState === 1) {
@@ -183,125 +282,137 @@ export default function CallLogixTranscriptie() {
         };
         mr.start(250);
         stopMediaRecorderRef.current = () => {
-          try { mr.stop(); } catch {}
-          try { stream.getTracks().forEach(t => t.stop()); } catch {}
+          try {
+            mr.stop();
+          } catch {}
+          try {
+            stream.getTracks().forEach((t) => t.stop());
+          } catch {}
           stopMediaRecorderRef.current = null;
         };
-      } catch (err) {
-        // getUserMedia faalt -> direct PCM fallback
+      } catch {
+        // getUserMedia faalt -> PCM fallback
         wsRef.current?.close();
         await startWithPCM(token, wsBase);
         return;
       }
 
-      // Fallback naar PCM indien Deepgram 0 JSON terugstuurt in 5s
+      // Als er binnen 5s niets terugkomt, switch automatisch naar PCM
       fallbackTimerRef.current = window.setTimeout(async () => {
         if (!receivedAnyRef.current) {
-          try { stopMediaRecorderRef.current?.(); } catch {}
-          try { wsRef.current?.close(); } catch {}
+          try {
+            stopMediaRecorderRef.current?.();
+          } catch {}
+          try {
+            wsRef.current?.close();
+          } catch {}
           await startWithPCM(token, wsBase);
         }
       }, 5000);
     };
 
-    wsRef.current.onmessage = (event) => {
-      try {
-        const json = JSON.parse(event.data);
-        receivedAnyRef.current = true; // we krijgen iets terug
-        const alt = json?.channel?.alternatives?.[0];
-        if (alt?.transcript !== undefined) {
-          const tekst = alt.transcript?.trim() || "";
-          if (json.is_final && tekst) {
-            setTranscript((prev) => {
-              const regel = `${speakerLabel(0)}: ${tekst}`;
-              const nieuw = [...prev, regel];
-              getSuggestions(nieuw.join("\n"));
-              return nieuw;
-            });
-            setInterim("");
-          } else if (!json.is_final) {
-            setInterim(tekst ? `${speakerLabel(0)}: ${tekst}` : "");
-          }
-        }
-      } catch { /* non-JSON pings negeren */ }
+    wsRef.current.onmessage = async (event) => {
+      const text = await normalizeWsText(event.data);
+      if (!text) return;
+      receivedAnyRef.current = true;
+      handleAsrJson(text);
     };
   };
 
-  // start met PCM fallback
-  async function startWithPCM(token: string, wsBase: string) {
-    const pcmUrl = `${wsBase}/ws/mic?conversation_id=${conversationId}&token=${encodeURIComponent(token)}&codec=linear16`;
-    wsRef.current = new WebSocket(pcmUrl);
-    wsRef.current.onopen = async () => { await startPCM(wsRef.current!); };
-    wsRef.current.onmessage = (event) => {
-      try {
-        const json = JSON.parse(event.data);
-        const alt = json?.channel?.alternatives?.[0];
-        if (alt?.transcript !== undefined) {
-          const tekst = alt.transcript?.trim() || "";
-          if (json.is_final && tekst) {
-            setTranscript((prev) => {
-              const regel = `${speakerLabel(0)}: ${tekst}`;
-              const nieuw = [...prev, regel];
-              getSuggestions(nieuw.join("\n"));
-              return nieuw;
-            });
-            setInterim("");
-          } else if (!json.is_final) {
-            setInterim(tekst ? `${speakerLabel(0)}: ${tekst}` : "");
-          }
-        }
-      } catch {}
-    };
-  }
-
   const stopRecording = () => {
     setRecording(false);
-    if (fallbackTimerRef.current) { clearTimeout(fallbackTimerRef.current); fallbackTimerRef.current = null; }
-    try { stopMediaRecorderRef.current?.(); } catch {}
-    try { cleanupPcmRef.current?.(); } catch {}
-    try { wsRef.current?.close(); } catch {}
+    if (fallbackTimerRef.current) {
+      clearTimeout(fallbackTimerRef.current);
+      fallbackTimerRef.current = null;
+    }
+    try {
+      stopMediaRecorderRef.current?.();
+    } catch {}
+    try {
+      cleanupPcmRef.current?.();
+    } catch {}
+    try {
+      wsRef.current?.close();
+    } catch {}
     if (sseStopRef.current) {
-      try { sseStopRef.current(); } catch {}
+      try {
+        sseStopRef.current();
+      } catch {}
       sseStopRef.current = null;
     }
   };
 
+  /* ----------------------------------- UI ----------------------------------- */
+
   return (
     <main className="min-h-screen px-2 py-8">
       <div className="max-w-5xl mx-auto flex flex-col sm:flex-row gap-8 items-stretch">
+        {/* Transcriptie */}
         <section className="flex-1 rounded-3xl p-8 flex flex-col">
           <header className="mb-8">
             <h2 className="text-3xl font-black">Live Transcriptie</h2>
           </header>
+
           <div className="flex-1 flex flex-col rounded-xl min-h-[160px] p-2 md:p-6 gap-2">
-            {transcript.length === 0 && <div className="opacity-60 italic">Nog geen transcriptie...</div>}
+            {transcript.length === 0 && (
+              <div className="opacity-60 italic">Nog geen transcriptie...</div>
+            )}
+
             {transcript.map((regel, i) => (
-              <div key={i} className="flex items-start gap-3 rounded-2xl p-4 bg-green-100" style={{ maxWidth: "90%", alignSelf: "flex-start" }}>
+              <div
+                key={i}
+                className="flex items-start gap-3 rounded-2xl p-4 bg-green-100"
+                style={{ maxWidth: "90%", alignSelf: "flex-start" }}
+              >
                 <span className="px-3 py-1 rounded-xl text-xs font-bold">👨‍💼 Agent</span>
-                <span className="whitespace-pre-line break-words text-base font-mono">{regel}</span>
+                <span className="whitespace-pre-line break-words text-base font-mono">
+                  {regel}
+                </span>
               </div>
             ))}
+
             {interim && (
-              <div className="flex items-start gap-3 rounded-2xl p-4 border-dashed border-2 opacity-70 border-green-400" style={{ maxWidth: "90%", alignSelf: "flex-start" }}>
+              <div
+                className="flex items-start gap-3 rounded-2xl p-4 border-dashed border-2 opacity-70 border-green-400"
+                style={{ maxWidth: "90%", alignSelf: "flex-start" }}
+              >
                 <span className="px-3 py-1 rounded-xl text-xs font-bold">👨‍💼 Agent</span>
-                <span className="whitespace-pre-line break-words text-base font-mono animate-pulse">{interim}</span>
+                <span className="whitespace-pre-line break-words text-base font-mono animate-pulse">
+                  {interim}
+                </span>
               </div>
             )}
           </div>
+
           <div className="flex gap-3 mt-6 justify-center">
-            <button className={`px-5 py-2 rounded-xl font-bold ${recording ? "opacity-60 cursor-not-allowed" : "bg-black text-white"}`} onClick={startRecording} disabled={recording}>
+            <button
+              className={`px-5 py-2 rounded-xl font-bold ${
+                recording ? "opacity-60 cursor-not-allowed" : "bg-black text-white"
+              }`}
+              onClick={startRecording}
+              disabled={recording}
+            >
               ● Start
             </button>
-            <button className={`px-5 py-2 rounded-xl font-bold ${!recording ? "opacity-60 cursor-not-allowed" : "bg-black text-white"}`} onClick={stopRecording} disabled={!recording}>
+            <button
+              className={`px-5 py-2 rounded-xl font-bold ${
+                !recording ? "opacity-60 cursor-not-allowed" : "bg-black text-white"
+              }`}
+              onClick={stopRecording}
+              disabled={!recording}
+            >
               ■ Stop
             </button>
           </div>
         </section>
 
+        {/* Suggesties */}
         <aside className="w-full sm:w-80 rounded-3xl p-8 flex flex-col">
           <h3 className="text-xl font-bold mb-6">AI Vraagsuggesties</h3>
           <ul className="space-y-4 flex-1">
-            {suggestions.length === 0 && <li className="opacity-40">Nog geen suggesties...</li>}
+            {suggestions.length === 0 && (
+              <li className="opacity-40">Nog geen suggesties...</li>
+            )}
             {suggestions.map((s, i) => (
               <li key={i} className="rounded-2xl p-4 border">
                 <SuggestionFeedback suggestion={s} conversationId={conversationId} />
