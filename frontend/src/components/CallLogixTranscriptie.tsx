@@ -60,14 +60,16 @@ export default function CallLogixTranscriptie() {
     return speaker === 0 ? "Agent" : "Gebruiker";
   }
 
-  // Open SSE zodra we een wsToken hebben
+  // Open SSE zodra we een wsToken hebben (token in query, geen cookies nodig)
   useEffect(() => {
     if (!wsToken) return;
     if (sseStopRef.current) {
       try { sseStopRef.current(); } catch {}
       sseStopRef.current = null;
     }
-    const url = `${import.meta.env.VITE_API_BASE_URL}/api/stream/suggestions?conversation_id=${conversationId}&token=${encodeURIComponent(wsToken)}`;
+    const url = `${import.meta.env.VITE_API_BASE_URL}/api/stream/suggestions?conversation_id=${conversationId}&token=${encodeURIComponent(
+      wsToken
+    )}`;
     sseStopRef.current = makeEventStream(url, (type, data) => {
       if (type === "suggestions" && data?.suggestions) {
         setSuggestions(data.suggestions.map((t: string) => ({ text: t })));
@@ -90,6 +92,22 @@ export default function CallLogixTranscriptie() {
     } catch {}
   }
 
+  // Kies runtime een ondersteund container/codec-combinatie (Chrome/Edge: webm; Safari: recorder vaak afwezig)
+  function pickSupportedMime(): string | null {
+    const candidates = [
+      "audio/webm;codecs=opus",
+      "audio/ogg;codecs=opus",
+      "audio/webm",
+    ];
+    if (typeof (window as any).MediaRecorder === "undefined") return null;
+    for (const t of candidates) {
+      try {
+        if ((window as any).MediaRecorder.isTypeSupported?.(t)) return t;
+      } catch {}
+    }
+    return null;
+  }
+
   const startRecording = async () => {
     setTranscript([]);
     setInterim("");
@@ -109,8 +127,14 @@ export default function CallLogixTranscriptie() {
       navigator.mediaDevices
         .getUserMedia({ audio: { channelCount: 1, sampleRate: 48000 } })
         .then((stream) => {
-          // ✅ OGG/Opus container — Deepgram pakt dit als encoding=opus
-          const mr = new MediaRecorder(stream, { mimeType: "audio/ogg;codecs=opus" });
+          const mimeType = pickSupportedMime();
+          if (!mimeType) {
+            console.error("MediaRecorder/Opus niet ondersteund door deze browser.");
+            alert("Opname wordt niet ondersteund door deze browser. Probeer Chrome/Edge desktop.");
+            return;
+          }
+          console.info("Gebruik opnameformaat:", mimeType);
+          const mr = new MediaRecorder(stream, { mimeType });
           mr.ondataavailable = async (e) => {
             if (e.data.size > 0 && wsRef.current?.readyState === 1) {
               const buf = await e.data.arrayBuffer();
@@ -119,14 +143,21 @@ export default function CallLogixTranscriptie() {
           };
           mr.start(250);
           wsRef.current!.onclose = () => {
+            try { mr.stop(); } catch {}
             stream.getTracks().forEach((t) => t.stop());
           };
+        })
+        .catch((err) => {
+          console.error("getUserMedia error", err);
+          alert("Microfoon toegang geweigerd of niet beschikbaar.");
         });
     };
 
+    // Deepgram JSON events → transcript
     wsRef.current.onmessage = (event) => {
       try {
         const json = JSON.parse(event.data);
+        // console.log("DG:", json); // eventueel tijdelijk aanzetten
         const alt = json?.channel?.alternatives?.[0];
         if (alt?.transcript !== undefined) {
           const tekst = alt.transcript?.trim() || "";
@@ -142,7 +173,9 @@ export default function CallLogixTranscriptie() {
             setInterim(tekst ? `${speakerLabel(0)}: ${tekst}` : "");
           }
         }
-      } catch {}
+      } catch {
+        // non‑JSON ping negeren
+      }
     };
   };
 
@@ -162,7 +195,7 @@ export default function CallLogixTranscriptie() {
           <header className="mb-8">
             <h2 className="text-3xl font-black">Live Transcriptie</h2>
           </header>
-          <div className="flex-1 flex flex-col rounded-xl min-h-[160px] p-2 md:p-6 gap-2">
+        <div className="flex-1 flex flex-col rounded-xl min-h-[160px] p-2 md:p-6 gap-2">
             {transcript.length === 0 && (
               <div className="opacity-60 italic">Nog geen transcriptie...</div>
             )}
