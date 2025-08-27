@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import api from "../api";
-import { makeEventStream } from "../lib/eventStream";
 
 /* ----------------------------- Types ----------------------------- */
 type VSug = { id: string; text: string; pinned?: boolean; shownAt: number };
@@ -189,13 +188,12 @@ export default function CallLogixTranscriptie() {
   const [interim, setInterim] = useState("");
 
   const [conversationId] = useState(() => crypto.randomUUID());
-  const [wsToken, setWsToken] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const cleanupPcmRef = useRef<null | (() => void)>(null);
 
   // Suggesties
-  const [suggestionPool, setSuggestionPool] = useState<VSug[]>([]);
+  const [, setSuggestionPool] = useState<VSug[]>([]); // alleen setter nodig
   const [visibleSuggestions, setVisibleSuggestions] = useState<VSug[]>([]);
   const lastSuggestionSentRef = useRef("");
 
@@ -209,11 +207,9 @@ export default function CallLogixTranscriptie() {
 
   function ingestSuggestions(items: string[]) {
     const now = Date.now();
-    const add = items.map((t) => ({
-      id: crypto.randomUUID(),
-      text: t,
-      shownAt: now,
-    }));
+    const add: VSug[] = items
+      .filter((t) => t && t.trim())
+      .map((t) => ({ id: crypto.randomUUID(), text: t.trim(), shownAt: now }));
     setSuggestionPool((prev) => [...prev, ...add]);
   }
 
@@ -230,9 +226,7 @@ export default function CallLogixTranscriptie() {
     const t = setInterval(() => {
       setVisibleSuggestions((vis) => {
         const now = Date.now();
-        let next = vis.filter(
-          (v) => v.pinned || now - v.shownAt < TTL_MS
-        );
+        let next = vis.filter((v) => v.pinned || now - v.shownAt < TTL_MS);
         setSuggestionPool((pool) => {
           let p = [...pool];
           while (next.length < 3 && p.length > 0) {
@@ -253,7 +247,7 @@ export default function CallLogixTranscriptie() {
     lastSuggestionSentRef.current = msg;
     try {
       const data = await api.suggestOnDemand(msg);
-      ingestSuggestions(data?.suggestions ?? []);
+      ingestSuggestions((data?.suggestions ?? []) as string[]);
     } catch {
       /* ignore */
     }
@@ -358,7 +352,6 @@ export default function CallLogixTranscriptie() {
     setRecording(true);
 
     const { token } = await api.wsToken();
-    setWsToken(token);
 
     const base = import.meta.env.VITE_API_BASE_URL as string;
     const wsBase = base.replace(/^http/i, "ws");
@@ -396,8 +389,9 @@ export default function CallLogixTranscriptie() {
     setAskedQuestions(qs);
     setShownSuggestions(visibleSuggestions);
 
-    api.summarize({ transcript: transcript.join("\n") })
-      .then((r) => setSummary(r?.summary ?? ""))
+    api
+      .summarize({ transcript: transcript.join("\n") })
+      .then((r: any) => setSummary(r?.summary ?? ""))
       .catch(() => setSummary("(Geen samenvatting)"));
 
     setReviewOpen(true);
