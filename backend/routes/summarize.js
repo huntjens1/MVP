@@ -1,46 +1,27 @@
-import express from "express";
-import { OpenAI } from "openai";
-import { requireAuth } from "../middlewares/auth.js";
-import { requireRole } from "../middlewares/requireRole.js";
+import { Router } from "express";
+import OpenAI from "openai";
 
-const router = express.Router();
-const allRoles = ["support", "coordinator", "manager", "superadmin"];
+const router = Router();
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-router.post('/api/summarize',
-  requireAuth,
-  requireRole(allRoles),
-  async (req, res) => {
-    const { transcript } = req.body;
-    if (!transcript || !transcript.trim()) {
-      return res.status(400).json({ summary: "Transcript ontbreekt." });
-    }
+router.post("/api/summarize", async (req, res) => {
+  try {
+    const { transcript } = req.body || {};
+    if (!transcript) return res.status(400).json({ error: "missing_transcript" });
 
-    const prompt = `
-Vat het volgende IT-supportgesprek bondig samen. Focus op probleem, acties, oplossing en eventuele follow-up. Gebruik dit format:
-- Klant: [naam/ID, indien bekend]
-- Probleem: [kort en duidelijk]
-- Actie(s): [samenvatting acties]
-- Oplossing: [indien opgelost]
-- Follow-up: [indien nodig]
-Transcript:
-${transcript}
+    const system = `
+Je bent een NEDERLANDSE IT-servicedesk agent.
+Vat het gesprek samen in max 5 regels.
+Noem indien mogelijk: probleemcategorie, prioriteit en impact.
 `;
 
-    try {
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [{ role: "user", content: prompt }],
-        max_tokens: 350,
-        temperature: 0.4,
-      });
+    const resp = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0.3,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: transcript.slice(0, 2000) },
+      ],
+    });
 
-      const summary = response.choices?.[0]?.message?.content || "Geen samenvatting gegenereerd.";
-      res.json({ summary });
-    } catch (err) {
-      res.status(500).json({ summary: "Samenvatten mislukt.", error: err.message });
-    }
-  }
-);
-
-export default router;
+    const summary = resp.choices?.[0]?.message?.content || "(geen samenv

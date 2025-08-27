@@ -2,13 +2,22 @@ import { useEffect, useRef, useState } from "react";
 import api from "../api";
 import { makeEventStream } from "../lib/eventStream";
 
-/* ----------------------------- UI subcomponent ----------------------------- */
+/* ----------------------------- Types ----------------------------- */
+type VSug = { id: string; text: string; pinned?: boolean; shownAt: number };
 
-function SuggestionFeedback({
+const TTL_MS = 20000;        // Suggestie blijft min. 20s zichtbaar
+const REFRESH_MS = 3000;     // Elke 3s evalueren
+
+/* ----------------------------- Suggestiekaart ----------------------------- */
+function SuggestionCard({
   suggestion,
+  onPinToggle,
+  onUsed,
   conversationId,
 }: {
-  suggestion: { id?: string; text: string };
+  suggestion: VSug;
+  onPinToggle: (id: string) => void;
+  onUsed: (id: string) => void;
   conversationId: string;
 }) {
   const [feedback, setFeedback] = useState<null | "good" | "bad">(null);
@@ -23,120 +32,244 @@ function SuggestionFeedback({
         feedback: rating === "good" ? 1 : -1,
       });
     } catch {
-      alert("Feedback opslaan mislukt.");
+      /* ignore */
     }
   }
 
   return (
-    <div className="flex items-center gap-3 my-1">
-      <span className="flex-1">{suggestion.text}</span>
-      <button
-        className={`px-2 py-1 rounded-lg ${
-          feedback === "good" ? "bg-green-600 text-white" : "bg-gray-200"
-        }`}
-        disabled={!!feedback}
-        onClick={() => send("good")}
-      >
-        👍 Goed
-      </button>
-      <button
-        className={`px-2 py-1 rounded-lg ${
-          feedback === "bad" ? "bg-red-600 text-white" : "bg-gray-200"
-        }`}
-        disabled={!!feedback}
-        onClick={() => send("bad")}
-      >
-        👎 Niet bruikbaar
-      </button>
-      {feedback && <span className="text-green-600 ml-3">Bedankt!</span>}
+    <div className="rounded-2xl p-4 border flex flex-col gap-2">
+      <div className="flex justify-between items-center">
+        <span>{suggestion.text}</span>
+        <button
+          className="ml-2 text-sm text-blue-600"
+          onClick={() => onPinToggle(suggestion.id)}
+        >
+          {suggestion.pinned ? "📌 Unpin" : "📌 Pin"}
+        </button>
+      </div>
+      <div className="flex gap-2">
+        <button
+          className={`px-2 py-1 rounded ${
+            feedback === "good" ? "bg-green-600 text-white" : "bg-gray-200"
+          }`}
+          disabled={!!feedback}
+          onClick={() => send("good")}
+        >
+          👍 Goed
+        </button>
+        <button
+          className={`px-2 py-1 rounded ${
+            feedback === "bad" ? "bg-red-600 text-white" : "bg-gray-200"
+          }`}
+          disabled={!!feedback}
+          onClick={() => send("bad")}
+        >
+          👎 Niet bruikbaar
+        </button>
+        <button
+          className="ml-auto text-xs text-gray-600"
+          onClick={() => onUsed(suggestion.id)}
+        >
+          ✅ Gebruikt
+        </button>
+      </div>
     </div>
   );
 }
 
-/* ---------------------------------- Page ---------------------------------- */
+/* ----------------------------- Review Modal ----------------------------- */
+function ReviewModal({
+  open,
+  onClose,
+  summary,
+  askedQuestions,
+  shownSuggestions,
+  conversationId,
+}: {
+  open: boolean;
+  onClose: () => void;
+  summary: string;
+  askedQuestions: string[];
+  shownSuggestions: VSug[];
+  conversationId: string;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 bg-black/40 flex justify-center items-center">
+      <div className="bg-white p-6 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <h2 className="text-xl font-bold mb-4">Call Review</h2>
 
+        <h3 className="font-semibold mb-2">Samenvatting</h3>
+        <p className="mb-4 whitespace-pre-line">{summary}</p>
+
+        <h3 className="font-semibold mb-2">Gestelde vragen</h3>
+        <ul className="mb-4 space-y-2">
+          {askedQuestions.map((q, i) => (
+            <li key={i} className="flex items-center justify-between">
+              <span>{q}</span>
+              <div className="flex gap-2">
+                <button
+                  className="px-2 bg-green-200"
+                  onClick={() =>
+                    api.feedback({
+                      conversation_id: conversationId,
+                      suggestion_text: q,
+                      feedback: 1,
+                    })
+                  }
+                >
+                  👍
+                </button>
+                <button
+                  className="px-2 bg-red-200"
+                  onClick={() =>
+                    api.feedback({
+                      conversation_id: conversationId,
+                      suggestion_text: q,
+                      feedback: -1,
+                    })
+                  }
+                >
+                  👎
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+
+        <h3 className="font-semibold mb-2">Getoonde AI-suggesties</h3>
+        <ul className="space-y-2">
+          {shownSuggestions.map((s, i) => (
+            <li key={i} className="flex items-center justify-between">
+              <span>{s.text}</span>
+              <div className="flex gap-2">
+                <button
+                  className="px-2 bg-green-200"
+                  onClick={() =>
+                    api.feedback({
+                      conversation_id: conversationId,
+                      suggestion_text: s.text,
+                      feedback: 1,
+                    })
+                  }
+                >
+                  👍
+                </button>
+                <button
+                  className="px-2 bg-red-200"
+                  onClick={() =>
+                    api.feedback({
+                      conversation_id: conversationId,
+                      suggestion_text: s.text,
+                      feedback: -1,
+                    })
+                  }
+                >
+                  👎
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+
+        <div className="mt-6 flex justify-end">
+          <button className="px-4 py-2 bg-black text-white rounded" onClick={onClose}>
+            Sluiten
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ----------------------------- Main Component ----------------------------- */
 export default function CallLogixTranscriptie() {
   const [recording, setRecording] = useState(false);
   const [transcript, setTranscript] = useState<string[]>([]);
   const [interim, setInterim] = useState("");
-  const [suggestions, setSuggestions] = useState<{ id?: string; text: string }[]>([]);
 
   const [conversationId] = useState(() => crypto.randomUUID());
   const [wsToken, setWsToken] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
-  const sseStopRef = useRef<null | (() => void)>(null);
   const cleanupPcmRef = useRef<null | (() => void)>(null);
 
+  // Suggesties
+  const [suggestionPool, setSuggestionPool] = useState<VSug[]>([]);
+  const [visibleSuggestions, setVisibleSuggestions] = useState<VSug[]>([]);
   const lastSuggestionSentRef = useRef("");
 
-  /* ----------------------------- Suggestions SSE ---------------------------- */
+  // Review
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [summary, setSummary] = useState("");
+  const [askedQuestions, setAskedQuestions] = useState<string[]>([]);
+  const [shownSuggestions, setShownSuggestions] = useState<VSug[]>([]);
+
+  /* ----------------------------- Suggestion logic ----------------------------- */
+
+  function ingestSuggestions(items: string[]) {
+    const now = Date.now();
+    const add = items.map((t) => ({
+      id: crypto.randomUUID(),
+      text: t,
+      shownAt: now,
+    }));
+    setSuggestionPool((prev) => [...prev, ...add]);
+  }
+
+  function pinToggle(id: string) {
+    setVisibleSuggestions((v) =>
+      v.map((s) => (s.id === id ? { ...s, pinned: !s.pinned } : s))
+    );
+  }
+  function markUsed(id: string) {
+    setVisibleSuggestions((v) => v.filter((s) => s.id !== id));
+  }
 
   useEffect(() => {
-    if (!wsToken) return;
-    if (sseStopRef.current) {
-      try {
-        sseStopRef.current();
-      } catch {}
-      sseStopRef.current = null;
+    const t = setInterval(() => {
+      setVisibleSuggestions((vis) => {
+        const now = Date.now();
+        let next = vis.filter(
+          (v) => v.pinned || now - v.shownAt < TTL_MS
+        );
+        setSuggestionPool((pool) => {
+          let p = [...pool];
+          while (next.length < 3 && p.length > 0) {
+            const cand = p.shift()!;
+            next.push({ ...cand, shownAt: now });
+          }
+          return p;
+        });
+        return next;
+      });
+    }, REFRESH_MS);
+    return () => clearInterval(t);
+  }, []);
+
+  async function getSuggestions(currentTranscript: string) {
+    const msg = currentTranscript.trim();
+    if (!msg || msg === lastSuggestionSentRef.current) return;
+    lastSuggestionSentRef.current = msg;
+    try {
+      const data = await api.suggestOnDemand(msg);
+      ingestSuggestions(data?.suggestions ?? []);
+    } catch {
+      /* ignore */
     }
-    const url = `${import.meta.env.VITE_API_BASE_URL}/api/stream/suggestions?conversation_id=${conversationId}&token=${encodeURIComponent(
-      wsToken
-    )}`;
-    sseStopRef.current = makeEventStream(url, (type, data) => {
-      if (type === "suggestions" && data?.suggestions) {
-        setSuggestions(data.suggestions.map((t: string) => ({ text: t })));
-      }
-    });
-    return () => {
-      if (sseStopRef.current) {
-        try {
-          sseStopRef.current();
-        } catch {}
-        sseStopRef.current = null;
-      }
-    };
-  }, [conversationId, wsToken]);
-
-async function getSuggestions(currentTranscript: string) {
-  const msg = currentTranscript.trim();
-  if (!msg || msg === lastSuggestionSentRef.current) return;
-  lastSuggestionSentRef.current = msg;
-
-  try {
-    const data = await api.suggestOnDemand(msg);
-    // Normaliseer altijd naar { text: string }
-    const items =
-      (data?.suggestions ?? []).map((x: any) =>
-        typeof x === "string" ? { text: x } : { text: x?.text ?? "" }
-      )
-      .filter((s: { text: string }) => s.text && s.text.length > 0)
-      .slice(0, 3);
-
-    setSuggestions(items);
-  } catch {
-    /* ignore */
   }
-}
 
+  /* ----------------------------- ASR handling ----------------------------- */
 
-  /* ------------------------------ Audio Helpers ----------------------------- */
-
-  // Decode WS event (string | Blob | ArrayBuffer) -> string | null
-  async function normalizeWsText(
-    data: string | Blob | ArrayBuffer
-  ): Promise<string | null> {
+  async function normalizeWsText(data: string | Blob | ArrayBuffer) {
     try {
       if (typeof data === "string") return data;
       if (data instanceof Blob) return await data.text();
       if (data instanceof ArrayBuffer) return new TextDecoder().decode(data);
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     return null;
   }
 
-  // Common ASR JSON handler
   function handleAsrJson(text: string) {
     try {
       const json = JSON.parse(text);
@@ -155,12 +288,9 @@ async function getSuggestions(currentTranscript: string) {
           setInterim(t ? `Agent: ${t}` : "");
         }
       }
-    } catch {
-      // heartbeat/non-JSON -> negeren
-    }
+    } catch {}
   }
 
-  // PCM pipeline (linear16@16kHz)
   async function startPCM(ws: WebSocket) {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, sampleRate: 48000 },
@@ -218,12 +348,13 @@ async function getSuggestions(currentTranscript: string) {
     };
   }
 
-  /* --------------------------------- Control -------------------------------- */
+  /* ----------------------------- Controls ----------------------------- */
 
   const startRecording = async () => {
     setTranscript([]);
     setInterim("");
-    setSuggestions([]);
+    setVisibleSuggestions([]);
+    setSuggestionPool([]);
     setRecording(true);
 
     const { token } = await api.wsToken();
@@ -232,7 +363,6 @@ async function getSuggestions(currentTranscript: string) {
     const base = import.meta.env.VITE_API_BASE_URL as string;
     const wsBase = base.replace(/^http/i, "ws");
 
-    // DIRECT PCM (linear16) – Opus later weer aanzetten zodra stabiel.
     const pcmUrl = `${wsBase}/ws/mic?conversation_id=${conversationId}&token=${encodeURIComponent(
       token
     )}&codec=linear16`;
@@ -258,16 +388,22 @@ async function getSuggestions(currentTranscript: string) {
     try {
       wsRef.current?.close();
     } catch {}
-    if (sseStopRef.current) {
-      try {
-        sseStopRef.current();
-      } catch {}
-      sseStopRef.current = null;
-    }
+
+    // Prepare review
+    const qs = transcript
+      .map((l) => l.replace(/^Agent:\s*/, "").trim())
+      .filter((l) => l.endsWith("?"));
+    setAskedQuestions(qs);
+    setShownSuggestions(visibleSuggestions);
+
+    api.summarize({ transcript: transcript.join("\n") })
+      .then((r) => setSummary(r?.summary ?? ""))
+      .catch(() => setSummary("(Geen samenvatting)"));
+
+    setReviewOpen(true);
   };
 
-  /* ----------------------------------- UI ----------------------------------- */
-
+  /* ----------------------------- UI ----------------------------- */
   return (
     <main className="min-h-screen px-2 py-8">
       <div className="max-w-5xl mx-auto flex flex-col sm:flex-row gap-8 items-stretch">
@@ -281,25 +417,16 @@ async function getSuggestions(currentTranscript: string) {
             {transcript.length === 0 && (
               <div className="opacity-60 italic">Nog geen transcriptie...</div>
             )}
-
             {transcript.map((regel, i) => (
-              <div
-                key={i}
-                className="flex items-start gap-3 rounded-2xl p-4 bg-green-100"
-                style={{ maxWidth: "90%", alignSelf: "flex-start" }}
-              >
+              <div key={i} className="flex items-start gap-3 rounded-2xl p-4 bg-green-100">
                 <span className="px-3 py-1 rounded-xl text-xs font-bold">👨‍💼 Agent</span>
                 <span className="whitespace-pre-line break-words text-base font-mono">
                   {regel}
                 </span>
               </div>
             ))}
-
             {interim && (
-              <div
-                className="flex items-start gap-3 rounded-2xl p-4 border-dashed border-2 opacity-70 border-green-400"
-                style={{ maxWidth: "90%", alignSelf: "flex-start" }}
-              >
+              <div className="flex items-start gap-3 rounded-2xl p-4 border-dashed border-2 opacity-70 border-green-400">
                 <span className="px-3 py-1 rounded-xl text-xs font-bold">👨‍💼 Agent</span>
                 <span className="whitespace-pre-line break-words text-base font-mono animate-pulse">
                   {interim}
@@ -334,21 +461,31 @@ async function getSuggestions(currentTranscript: string) {
         <aside className="w-full sm:w-80 rounded-3xl p-8 flex flex-col">
           <h3 className="text-xl font-bold mb-6">AI Vraagsuggesties</h3>
           <ul className="space-y-4 flex-1">
-            {suggestions.length === 0 && (
+            {visibleSuggestions.length === 0 && (
               <li className="opacity-40">Nog geen suggesties...</li>
             )}
-            {suggestions.map((s: any, i) => {
-              const item = typeof s === "string" ? { text: s } : s;
-              return (
-                <li key={i} className="rounded-2xl p-4 border">
-                  <SuggestionFeedback suggestion={item} conversationId={conversationId} />
-                </li>
-              );
-            })}
-
+            {visibleSuggestions.map((s) => (
+              <li key={s.id}>
+                <SuggestionCard
+                  suggestion={s}
+                  onPinToggle={pinToggle}
+                  onUsed={markUsed}
+                  conversationId={conversationId}
+                />
+              </li>
+            ))}
           </ul>
         </aside>
       </div>
+
+      <ReviewModal
+        open={reviewOpen}
+        onClose={() => setReviewOpen(false)}
+        summary={summary}
+        askedQuestions={askedQuestions}
+        shownSuggestions={shownSuggestions}
+        conversationId={conversationId}
+      />
     </main>
   );
 }
