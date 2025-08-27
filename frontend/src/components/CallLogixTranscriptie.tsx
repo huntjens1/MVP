@@ -98,17 +98,27 @@ export default function CallLogixTranscriptie() {
     };
   }, [conversationId, wsToken]);
 
-  async function getSuggestions(currentTranscript: string) {
-    const msg = currentTranscript.trim();
-    if (!msg || msg === lastSuggestionSentRef.current) return;
-    lastSuggestionSentRef.current = msg;
-    try {
-      const data = await api.suggestOnDemand(msg);
-      if (data?.suggestions) setSuggestions(data.suggestions);
-    } catch {
-      /* ignore */
-    }
+async function getSuggestions(currentTranscript: string) {
+  const msg = currentTranscript.trim();
+  if (!msg || msg === lastSuggestionSentRef.current) return;
+  lastSuggestionSentRef.current = msg;
+
+  try {
+    const data = await api.suggestOnDemand(msg);
+    // Normaliseer altijd naar { text: string }
+    const items =
+      (data?.suggestions ?? []).map((x: any) =>
+        typeof x === "string" ? { text: x } : { text: x?.text ?? "" }
+      )
+      .filter((s: { text: string }) => s.text && s.text.length > 0)
+      .slice(0, 3);
+
+    setSuggestions(items);
+  } catch {
+    /* ignore */
   }
+}
+
 
   /* ------------------------------ Audio Helpers ----------------------------- */
 
@@ -327,11 +337,15 @@ export default function CallLogixTranscriptie() {
             {suggestions.length === 0 && (
               <li className="opacity-40">Nog geen suggesties...</li>
             )}
-            {suggestions.map((s, i) => (
-              <li key={i} className="rounded-2xl p-4 border">
-                <SuggestionFeedback suggestion={s} conversationId={conversationId} />
-              </li>
-            ))}
+            {suggestions.map((s: any, i) => {
+              const item = typeof s === "string" ? { text: s } : s;
+              return (
+                <li key={i} className="rounded-2xl p-4 border">
+                  <SuggestionFeedback suggestion={item} conversationId={conversationId} />
+                </li>
+              );
+            })}
+
           </ul>
         </aside>
       </div>
