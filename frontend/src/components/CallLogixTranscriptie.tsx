@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import api from "../api";
+import api from "../api/index";
 
 /* ----------------------------- Types ----------------------------- */
 type VSug = { id: string; text: string; pinned?: boolean; shownAt: number };

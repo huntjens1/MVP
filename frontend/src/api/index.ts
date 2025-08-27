@@ -1,29 +1,57 @@
-const BASE = import.meta.env.VITE_API_BASE_URL;
+// src/api/index.ts
+// Eenduidige API helper met alle gebruikte endpoints, incl. summarize.
 
-async function j<T>(res: Response): Promise<T> {
-  if (!res.ok) throw new Error(`${res.status}`);
+const BASE = import.meta.env.VITE_API_BASE_URL as string;
+
+async function asJson<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`HTTP ${res.status} ${res.statusText} ${txt}`);
+  }
   return (await res.json()) as T;
 }
 
-export default {
-  wsToken: async () => j(await fetch(`${BASE}/api/ws-token`, { credentials: "include" })),
+export type WsTokenResp = { token: string };
 
-  ingestTranscript: async (payload: {
-    conversation_id: string;
-    content: string;
-    is_final?: boolean;
-    speaker_label?: string;
-    speaker?: number;
-  }) =>
-    j(await fetch(`${BASE}/api/transcripts`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      credentials: "include",
-    })),
+export type SuggestResp = { suggestions: string[] };
 
-  suggestOnDemand: async (transcript: string) =>
-    j<{ suggestions: string[] }>(
+export type FeedbackPayload = {
+  suggestion_id?: string;
+  suggestion_text: string;
+  conversation_id: string;
+  feedback: 1 | -1;
+};
+
+export type IngestPayload = {
+  conversation_id: string;
+  content: string;
+  is_final?: boolean;
+  speaker_label?: string;
+  speaker?: number;
+};
+
+export type SummarizePayload = { transcript: string };
+export type SummarizeResp = { summary: string };
+
+const api = {
+  /** Token voor WS /ws/mic */
+  wsToken: async (): Promise<WsTokenResp> =>
+    asJson(await fetch(`${BASE}/api/ws-token`, { credentials: "include" })),
+
+  /** Transcriptregels opslaan (optioneel) */
+  ingestTranscript: async (payload: IngestPayload) =>
+    asJson(
+      await fetch(`${BASE}/api/transcripts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        credentials: "include",
+      })
+    ),
+
+  /** Ad-hoc AI-vraagsuggesties */
+  suggestOnDemand: async (transcript: string): Promise<SuggestResp> =>
+    asJson(
       await fetch(`${BASE}/api/suggest-question`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -32,21 +60,20 @@ export default {
       })
     ),
 
-  feedback: async (payload: {
-    suggestion_id?: string;
-    suggestion_text: string;
-    conversation_id: string;
-    feedback: number; // 1 of -1
-  }) =>
-    j(await fetch(`${BASE}/api/ai/feedback`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      credentials: "include",
-    })),
+  /** Duimpje voor suggestie of gestelde vraag */
+  feedback: async (payload: FeedbackPayload) =>
+    asJson(
+      await fetch(`${BASE}/api/ai/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        credentials: "include",
+      })
+    ),
 
-  summarize: async (payload: { transcript: string }) =>
-    j<{ summary: string }>(
+  /** Samenvatting voor review-modal */
+  summarize: async (payload: SummarizePayload): Promise<SummarizeResp> =>
+    asJson(
       await fetch(`${BASE}/api/summarize`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -55,3 +82,5 @@ export default {
       })
     ),
 };
+
+export default api;
