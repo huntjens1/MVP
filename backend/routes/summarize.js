@@ -24,4 +24,12 @@ Noem indien mogelijk: probleemcategorie, prioriteit en impact.
       ],
     });
 
-    const summary = resp.choices?.[0]?.message?.content || "(geen samenv
+    const summary = resp.choices?.[0]?.message?.content || "(geen samenvatting)";
+    res.json({ summary });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "summarize_failed" });
+  }
+});
+
+export default router;
