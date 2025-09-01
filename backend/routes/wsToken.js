@@ -1,20 +1,15 @@
-import express from 'express';
-import jwt from 'jsonwebtoken';
-import { requireAuth } from '../middlewares/auth.js';
+const express = require('express');
+const { createDeepgramToken } = require('../services/deepgram');
 
 const router = express.Router();
 
-router.post('/api/ws-token', requireAuth, (req, res) => {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) return res.status(500).json({ error: 'JWT_SECRET ontbreekt' });
-
-  const payload = {
-    uid: req.user.id,
-    tenant_id: req.user.tenant_id,
-    role: req.user.role || 'support',
-  };
-  const token = jwt.sign(payload, secret, { algorithm: 'HS256', expiresIn: '10m' });
-  return res.json({ token });
+router.all('/', async (_req, res) => {
+  try {
+    const token = await createDeepgramToken();
+    res.json({ token: token.access_token, expiresIn: token.expires_in });
+  } catch (e) {
+    res.status(500).json({ error: 'ws-token-failed', detail: e?.message });
+  }
 });
 
-export default router;
+module.exports = router;
