@@ -1,6 +1,6 @@
 const express = require('express');
 const { z } = require('zod');
-const { generateSuggestionsNL } = require('../services/openai');
+const { generateSuggestionsNL } = require('./openai');
 
 const router = express.Router();
 const Body = z.object({

@@ -4,7 +4,7 @@ async function createDeepgramToken() {
   const apiKey = process.env.DEEPGRAM_API_KEY;
   if (!apiKey) throw new Error('DEEPGRAM_API_KEY missing');
 
-  const ttl = Number(process.env.DG_TOKEN_TTL || 1800); // 30m default
+  const ttl = Number(process.env.DG_TOKEN_TTL || 1800);
   const body = { ttl_seconds: Math.min(Math.max(ttl, 30), 3600) };
 
   const res = await fetch(`${DG_API}/v1/auth/grant`, {

@@ -38,15 +38,12 @@ async function summarizeTranscriptNL(transcript) {
 }
 
 function robustJsonParseMaybeArray(text) {
-  // Probeer direct JSON te parsen
   try { return JSON.parse(text); } catch {}
-  // Fallback: probeer array-slice tussen eerste '[' en laatste ']'
   const start = text.indexOf('[');
   const end = text.lastIndexOf(']');
   if (start >= 0 && end > start) {
     try { return JSON.parse(text.slice(start, end + 1)); } catch {}
   }
-  // Fallback: probeer object
   const s2 = text.indexOf('{');
   const e2 = text.lastIndexOf('}');
   if (s2 >= 0 && e2 > s2) {

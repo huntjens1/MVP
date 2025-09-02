@@ -310,8 +310,7 @@ export default function CallLogixTranscriptie() {
       const ratio = inRate / outRate;
       const newLen = Math.round(buffer.length / ratio);
       const out = new Float32Array(newLen);
-      let oi = 0,
-        ii = 0;
+      let oi = 0, ii = 0;
       while (oi < newLen) {
         out[oi++] = buffer[Math.floor(ii)];
         ii += ratio;
@@ -328,16 +327,9 @@ export default function CallLogixTranscriptie() {
     };
 
     cleanupPcmRef.current = () => {
-      try {
-        proc.disconnect();
-        source.disconnect();
-      } catch {}
-      try {
-        stream.getTracks().forEach((t) => t.stop());
-      } catch {}
-      try {
-        audioCtx.close();
-      } catch {}
+      try { proc.disconnect(); source.disconnect(); } catch {}
+      try { stream.getTracks().forEach((t) => t.stop()); } catch {}
+      try { audioCtx.close(); } catch {}
       cleanupPcmRef.current = null;
     };
   }
@@ -351,14 +343,17 @@ export default function CallLogixTranscriptie() {
     setSuggestionPool([]);
     setRecording(true);
 
-    const { token } = await api.wsToken();
+    // ✅ Fix "token unknown": cast & destructure
+    const tokenResp = (await api.wsToken()) as { token: string; expiresIn?: number };
+    const wsJwt = tokenResp.token;
 
     const base = import.meta.env.VITE_API_BASE_URL as string;
     const wsBase = base.replace(/^http/i, "ws");
 
-    const pcmUrl = `${wsBase}/ws/mic?conversation_id=${conversationId}&token=${encodeURIComponent(
-      token
-    )}&codec=linear16`;
+    const pcmUrl =
+      `${wsBase}/ws/mic?conversation_id=${conversationId}` +
+      `&token=${encodeURIComponent(wsJwt)}` +
+      `&codec=linear16`;
 
     wsRef.current = new WebSocket(pcmUrl);
 
@@ -375,12 +370,8 @@ export default function CallLogixTranscriptie() {
 
   const stopRecording = () => {
     setRecording(false);
-    try {
-      cleanupPcmRef.current?.();
-    } catch {}
-    try {
-      wsRef.current?.close();
-    } catch {}
+    try { cleanupPcmRef.current?.(); } catch {}
+    try { wsRef.current?.close(); } catch {}
 
     // Prepare review
     const qs = transcript
@@ -431,18 +422,14 @@ export default function CallLogixTranscriptie() {
 
           <div className="flex gap-3 mt-6 justify-center">
             <button
-              className={`px-5 py-2 rounded-xl font-bold ${
-                recording ? "opacity-60 cursor-not-allowed" : "bg-black text-white"
-              }`}
+              className={`px-5 py-2 rounded-xl font-bold ${recording ? "opacity-60 cursor-not-allowed" : "bg-black text-white"}`}
               onClick={startRecording}
               disabled={recording}
             >
               ● Start
             </button>
             <button
-              className={`px-5 py-2 rounded-xl font-bold ${
-                !recording ? "opacity-60 cursor-not-allowed" : "bg-black text-white"
-              }`}
+              className={`px-5 py-2 rounded-xl font-bold ${!recording ? "opacity-60 cursor-not-allowed" : "bg-black text-white"}`}
               onClick={stopRecording}
               disabled={!recording}
             >

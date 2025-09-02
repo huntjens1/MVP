@@ -3,26 +3,26 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 
-const { strictCors } = require('./middleware/cors');
-const { telemetry } = require('./middleware/telemetry');
+const { strictCors } = require('./cors');
+const { telemetry } = require('./telemetry');
 
-const wsTokenRouter = require('./routes/wsToken');
-const summarizeRouter = require('./routes/summarize');
-const suggestRouter = require('./routes/suggest');
-const feedbackRouter = require('./routes/feedback');
+const wsTokenRouter = require('./wsToken');
+const summarizeRouter = require('./summarize');
+const suggestRouter = require('./suggest');
+const feedbackRouter = require('./feedback'); // ⬅️ NIEUW bestand — zie hieronder
 
 const app = express();
 app.set('trust proxy', 1);
 
 // Security + parsing
 app.use(helmet());
-app.use(strictCors);                      // strikte whitelist via ALLOWED_ORIGINS
+app.use(strictCors);
 app.use(express.json({ limit: '1mb' }));
 
 // Telemetry
 app.use(telemetry);
 
-// Morgan met tenant + request-id
+// Logging met tenant + request-id
 morgan.token('tenant', (_req, res) => (res?.locals?.tenant_id || 'unknown'));
 morgan.token('rid', (_req, res) => (res?.locals?.request_id || '-'));
 app.use(morgan(':method :url :status :res[content-length] - :response-time ms tenant=:tenant rid=:rid'));
@@ -47,16 +47,16 @@ app.use('/api/ws-token', tokenLimiter);
 // Health
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
-// Routes
+// Canonieke routes
 app.use('/api/ws-token', wsTokenRouter);
 app.use('/api/summarize', summarizeRouter);
 app.use('/api/suggest', suggestRouter);
 app.use('/api/feedback', feedbackRouter);
 
-// === ALIAS voor bestaande frontend calls (laat staan tot front is omgezet) ===
-app.use('/ws-token', wsTokenRouter);                 // als je ooit /ws-token direct riep
-app.use('/api/ai/summarize', summarizeRouter);       // alias
-app.use('/api/ai/feedback', feedbackRouter);         // alias
+// Aliassen voor bestaande frontend-calls (laat staan tot front is omgezet)
+app.use('/ws-token', wsTokenRouter);
+app.use('/api/ai/summarize', summarizeRouter);
+app.use('/api/ai/feedback', feedbackRouter);
 app.use('/api/suggestQuestion', suggestRouter);
 
 // 404

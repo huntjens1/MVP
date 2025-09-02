@@ -1,5 +1,5 @@
 const express = require('express');
-const { createDeepgramToken } = require('../services/deepgram');
+const { createDeepgramToken } = require('./deepgram');
 
 const router = express.Router();
 

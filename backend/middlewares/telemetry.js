@@ -6,7 +6,6 @@ function telemetry(req, res, next) {
   const rid = req.headers['x-request-id'] || randomUUID();
   res.setHeader('x-request-id', rid);
 
-  // tenant resolutie
   const u = req.user || {};
   const tenantId =
     (u && u.tenant_id) ||

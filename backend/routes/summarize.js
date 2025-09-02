@@ -1,6 +1,6 @@
 const express = require('express');
 const { z } = require('zod');
-const { summarizeTranscriptNL } = require('../services/openai');
+const { summarizeTranscriptNL } = require('./openai');
 
 const router = express.Router();
 const Body = z.object({ transcript: z.string().optional() });
