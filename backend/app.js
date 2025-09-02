@@ -3,13 +3,15 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 
-const { strictCors } = require('./middleware/cors');
-const { telemetry } = require('./middleware/telemetry');
+// ⬇️ JUISTE PADEN (meervoud)
+const { strictCors } = require('./middlewares/cors');
+const { telemetry } = require('./middlewares/telemetry');
 
-const wsTokenRouter = require('./wsToken');
-const summarizeRouter = require('./summarize');
-const suggestRouter = require('./suggest');
-const feedbackRouter = require('./feedback'); // moet bestaan, zie stap 3
+// ⬇️ Routers uit jouw routes/ map
+const wsTokenRouter = require('./routes/wsToken');
+const summarizeRouter = require('./routes/summarize');
+const suggestRouter = require('./routes/suggest');
+const feedbackRouter = require('./routes/feedback');
 
 const app = express();
 app.set('trust proxy', 1);
