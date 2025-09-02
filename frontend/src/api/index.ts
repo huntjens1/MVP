@@ -1,97 +1,144 @@
-// src/api/index.ts
-// Eenduidige API helper met alle gebruikte endpoints, incl. summarize.
+// Unified API helper voor CallLogix (frontend).
+// - Canonieke endpoints + automatische fallback naar oude alias-routes
+// - Sterk getypeerde responses (geen 'unknown' meer)
+// - BASE komt uit VITE_API_BASE_URL (bv. https://<railway-backend>)
 
-const BASE = import.meta.env.VITE_API_BASE_URL as string;
+export type WsTokenResponse = { token: string; expiresIn?: number };
+export type SuggestResponse = { suggestions: string[] };
+export type SummarizePayload = { transcript: string };
+export type SummarizeResponse = { summary: string };
+
+const BASE = (import.meta.env.VITE_API_BASE_URL ?? "") as string;
+const API = BASE.replace(/\/$/, ""); // strip trailing slash
 
 async function asJson<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const txt = await res.text().catch(() => "");
     throw new Error(`HTTP ${res.status} ${res.statusText} ${txt}`);
   }
+  // Sommige toolchains typeren res.json() als unknown → cast per-call
   return (await res.json()) as T;
 }
 
-export type WsTokenResp = { token: string };
-
-export type SuggestResp = { suggestions: string[] };
-
-export type FeedbackPayload = {
-  suggestion_id?: string;
-  suggestion_text: string;
-  conversation_id: string;
-  feedback: 1 | -1;
-};
-
-export type IngestPayload = {
-  conversation_id: string;
-  content: string;
-  is_final?: boolean;
-  speaker_label?: string;
-  speaker?: number;
-};
-
-export async function wsToken(): Promise<{ token: string; expiresIn: number }> {
-  const base = import.meta.env.VITE_API_BASE_URL as string; // bv https://<railway-backend>
-  const res = await fetch(`${base.replace(/\/$/, '')}/api/ws-token`, { method: 'POST' });
-  if (!res.ok) throw new Error('ws-token failed');
-  return res.json();
-}
-
-
-export type SummarizePayload = { transcript: string };
-export type SummarizeResp = { summary: string };
-
-const api = {
-  /** Token voor WS /ws/mic */
-  wsToken: async () =>
-  asJson(await fetch(`${BASE}/api/ws-token`, {
-    method: "POST",
-    credentials: "include",
-  })),
-
-  /** Transcriptregels opslaan (optioneel) */
-  ingestTranscript: async (payload: IngestPayload) =>
-    asJson(
-      await fetch(`${BASE}/api/transcripts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        credentials: "include",
-      })
-    ),
-
-  /** Ad-hoc AI-vraagsuggesties */
-  suggestOnDemand: async (transcript: string): Promise<SuggestResp> =>
-    asJson(
-      await fetch(`${BASE}/api/suggest-question`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transcript }),
-        credentials: "include",
-      })
-    ),
-
-  /** Duimpje voor suggestie of gestelde vraag */
-feedback: async (payload: FeedbackPayload) =>
-  asJson(
-    await fetch(`${BASE}/api/ai-feedback`, {   // <-- was /api/ai/feedback
+// --- interne helper met fallback naar alias-pad ---
+async function postJson<T>(
+  path: string,
+  body: unknown,
+  aliases: string[] = []
+): Promise<T> {
+  const url = `${API}${path}`;
+  try {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
       credentials: "include",
-    })
-  ),
+      body: JSON.stringify(body ?? {}),
+    });
+    return await asJson<T>(res);
+  } catch (e) {
+    // Fallback paden proberen (oude routes in jouw bestaande frontend)
+    for (const alt of aliases) {
+      const altUrl = `${API}${alt}`;
+      try {
+        const r = await fetch(altUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify(body ?? {}),
+        });
+        return await asJson<T>(r);
+      } catch {
+        /* probeer volgende alias */
+      }
+    }
+    throw e;
+  }
+}
 
-  /** Samenvatting voor review-modal */
-  summarize: async (payload: SummarizePayload): Promise<SummarizeResp> =>
-    asJson(
-      await fetch(`${BASE}/api/summarize`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        credentials: "include",
-      })
-    ),
+// ====================== Public API ======================
+
+/** Haal een tijdelijke Deepgram token op. */
+export async function wsToken(): Promise<WsTokenResponse> {
+  const data = await postJson<Partial<WsTokenResponse>>(
+    "/api/ws-token",
+    {},
+    ["/ws-token"] // alias
+  );
+  if (!data || typeof data.token !== "string") {
+    throw new Error("Invalid ws-token payload");
+  }
+  return { token: data.token, expiresIn: Number(data.expiresIn ?? 0) };
+}
+
+/** On-demand suggesties (NL, ITIL) voor UI. */
+export async function suggestOnDemand(
+  transcript: string,
+  max = 5
+): Promise<SuggestResponse> {
+  // Canoniek pad + alias voor backward compatibility
+  const raw = await postJson<any>(
+    "/api/suggest",
+    { transcript, max },
+    ["/api/suggestQuestion"]
+  );
+
+  // Normaliseer: backend kan string[] of [{text:...}] geven
+  const list = Array.isArray(raw?.suggestions) ? raw.suggestions : [];
+  const texts: string[] = list.map((item: any) =>
+    typeof item === "string" ? item : String(item?.text ?? "").trim()
+  ).filter(Boolean);
+
+  return { suggestions: texts };
+}
+
+/** Feedback voor vraag/suggestie (👍/👎) */
+export async function feedback(payload: {
+  suggestion_id?: string;          // id van suggestie (optioneel)
+  suggestionId?: string;           // alias key
+  suggestion_text?: string;        // vrije tekst (indien geen id)
+  conversation_id?: string;
+  feedback?: -1 | 0 | 1;           // -1=down, 1=up
+  vote?: "up" | "down";            // alias key
+}): Promise<{ ok: boolean }> {
+  // normaliseer keys
+  const body: any = {
+    suggestion_id: payload.suggestion_id ?? payload.suggestionId,
+    suggestion_text: payload.suggestion_text,
+    conversation_id: payload.conversation_id,
+  };
+  if (typeof payload.feedback === "number") {
+    body.feedback = Math.max(-1, Math.min(1, payload.feedback));
+  } else if (payload.vote) {
+    body.feedback = payload.vote === "up" ? 1 : -1;
+  } else {
+    body.feedback = 0;
+  }
+
+  const res = await postJson<{ ok: boolean }>(
+    "/api/feedback",
+    body,
+    ["/api/ai/feedback"] // alias pad
+  );
+  return { ok: !!res?.ok };
+}
+
+/** Samenvatting voor review-modal (soft-fail: summary = "") */
+export async function summarize(
+  payload: SummarizePayload
+): Promise<SummarizeResponse> {
+  const data = await postJson<Partial<SummarizeResponse>>(
+    "/api/summarize",
+    payload,
+    ["/api/ai/summarize"] // alias pad
+  );
+  return { summary: String(data?.summary ?? "") };
+}
+
+// Optioneel default export als object voor bestaande imports
+const api = {
+  wsToken,
+  suggestOnDemand,
+  feedback,
+  summarize,
 };
-
 export default api;
