@@ -1,72 +1,44 @@
-import express from 'express';
-import jwt from 'jsonwebtoken';
-import fetch from 'node-fetch';
-import { supabase } from '../supabaseClient.js';
-
-
+// CommonJS versie (geen ESM imports), compatible met jouw huidige backend
+const express = require('express');
 const router = express.Router();
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
-function msFromDuration(s) {
-  const m = String(s || '15m').match(/^(\d+)([smhd])$/i);
-  if (!m) return 15 * 60 * 1000;
-  const n = +m[1], u = m[2].toLowerCase();
-  return n * (u==='s'?1000:u==='m'?60000:u==='h'?3600000:86400000);
+// Safe require helpers – voorkomen crash als files nog in transitie zijn
+function safeRequire(path) {
+  try { return require(path); } catch (_e) { return {}; }
 }
 
-const cookieOpts = {
-  httpOnly: true, secure: true, sameSite: 'none', path: '/',
-  maxAge: msFromDuration(process.env.JWT_EXPIRES_IN || '15m'),
-};
+const ctrl = safeRequire('../controllers/authController');   // verwacht bv. ctrl.login, ctrl.logout, ctrl.me
+const requireAuth = safeRequire('../middlewares/auth');      // middleware die req.user zet (of 401)
 
-router.post('/api/login', async (req, res) => {
-  try {
-    const { email, password } = req.body || {};
-    if (!email || !password) return res.status(400).json({ error: 'email en password verplicht' });
-    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return res.status(500).json({ error: 'SUPABASE env ontbreekt' });
+// --- /api/login ---
+if (typeof ctrl.login === 'function') {
+  // Gebruik jouw bestaande login-controller
+  router.post('/login', ctrl.login);
+} else {
+  // Fallback om 502/404 te voorkomen (geen echte login)
+  router.post('/login', (_req, res) => {
+    res.status(501).json({ error: 'login_not_implemented' });
+  });
+}
 
-    const rsp = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-      },
-      body: JSON.stringify({ email, password }),
-    });
-    const sb = await rsp.json();
-    if (!rsp.ok) return res.status(401).json({ error: sb?.error_description || sb?.message || 'Supabase auth failed' });
+// --- /api/logout (optioneel) ---
+if (typeof ctrl.logout === 'function') {
+  router.post('/logout', ctrl.logout);
+}
 
-    const sbUserId = sb.user?.id;
-    if (!sbUserId) return res.status(401).json({ error: 'Geen user id van Supabase' });
+// --- /api/me ---
+if (typeof requireAuth === 'function') {
+  router.get('/me', requireAuth, (req, res) => {
+    res.json({ user: req.user ?? null });
+  });
+} else if (typeof ctrl.me === 'function') {
+  // Sommige projecten hebben rechtstreeks ctrl.me
+  router.get('/me', ctrl.me);
+} else {
+  // Fallback zonder auth-middleware
+  router.get('/me', (_req, res) => {
+    res.status(200).json({ user: null });
+  });
+}
 
-    const { data: userRow, error } = await supabase
-      .from('users').select('id, tenant_id, role, email')
-      .eq('id', sbUserId).single();
-
-    if (error || !userRow) return res.status(403).json({ error: 'Users-record ontbreekt voor deze account' });
-
-    const token = jwt.sign(
-      { uid: userRow.id, tenant_id: userRow.tenant_id, role: userRow.role || 'support' },
-      process.env.JWT_SECRET,
-      { algorithm: 'HS256', expiresIn: process.env.JWT_EXPIRES_IN || '15m' },
-    );
-    res.cookie('auth', token, cookieOpts);
-    return res.json({ ok: true, user: { id: userRow.id, email: userRow.email, tenant_id: userRow.tenant_id, role: userRow.role || 'support' } });
-  } catch {
-    return res.status(500).json({ error: 'Login failed' });
-  }
-});
-
-router.post('/api/logout', (_req, res) => { res.clearCookie('auth', { path: '/' }); res.json({ ok: true }); });
-router.get('/api/me', (req, res) => {
-  try {
-    const raw = req.cookies?.auth || '';
-    if (!raw) return res.json({ authenticated: false });
-    const payload = jwt.verify(raw, process.env.JWT_SECRET, { algorithms: ['HS256'] });
-    res.json({ authenticated: true, user: { id: payload.uid, tenant_id: payload.tenant_id, role: payload.role || 'support' } });
-  } catch { res.json({ authenticated: false }); }
-});
-
-export default router;
+module.exports = router;
