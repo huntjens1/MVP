@@ -3,13 +3,13 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 
-const { strictCors } = require('./cors');
-const { telemetry } = require('./telemetry');
+const { strictCors } = require('./middleware/cors');
+const { telemetry } = require('./middleware/telemetry');
 
 const wsTokenRouter = require('./wsToken');
 const summarizeRouter = require('./summarize');
 const suggestRouter = require('./suggest');
-const feedbackRouter = require('./feedback'); // ⬅️ NIEUW bestand — zie hieronder
+const feedbackRouter = require('./feedback'); // moet bestaan, zie stap 3
 
 const app = express();
 app.set('trust proxy', 1);
