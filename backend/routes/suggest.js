@@ -1,6 +1,7 @@
 const express = require('express');
 const { z } = require('zod');
-const { generateSuggestionsNL } = require('./openai');
+// ⬇️ juiste pad: services/openai.js
+const { generateSuggestionsNL } = require('../services/openai');
 
 const router = express.Router();
 const Body = z.object({
@@ -11,6 +12,7 @@ const Body = z.object({
 router.post('/', async (req, res) => {
   const parsed = Body.safeParse(req.body || {});
   if (!parsed.success) return res.json({ suggestions: [] });
+
   try {
     const suggestions = await generateSuggestionsNL({
       transcript: parsed.data.transcript || '',

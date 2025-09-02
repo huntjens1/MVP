@@ -1,5 +1,6 @@
 const express = require('express');
-const { createDeepgramToken } = require('./deepgram');
+// ⬇️ juiste pad: één map omhoog naar services/
+const { createDeepgramToken } = require('../services/deepgram');
 
 const router = express.Router();
 
