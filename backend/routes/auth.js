@@ -1,93 +1,106 @@
-// Robust CommonJS auth-router: vindt jouw handlers ongeacht export-namen.
-// Lost 400/501 "not implemented" op door automatisch te binden.
+// CommonJS router die automatisch je bestaande auth controller/middleware vindt.
+// Belangrijk: zet/cleart 'clx_tenant' cookie op basis van e-maildomein.
 
 const express = require('express');
+const { getTenantByEmailDomain } = require('../services/tenants');
 const router = express.Router();
 
-function safeRequire(p) {
-  try { return require(p); } catch { return null; }
-}
+function safeRequire(p) { try { return require(p); } catch { return null; } }
 
 function collectFns(obj, prefix = '', out = [], depth = 0) {
   if (!obj || typeof obj !== 'object' || depth > 2) return out;
   for (const k of Object.keys(obj)) {
-    const v = obj[k];
-    const name = prefix ? `${prefix}.${k}` : k;
+    const v = obj[k]; const name = prefix ? `${prefix}.${k}` : k;
     if (typeof v === 'function') out.push({ name, fn: v });
     else if (v && typeof v === 'object') collectFns(v, name, out, depth + 1);
   }
   return out;
 }
-
-function pickHandler(mod, kind) {
+function pickHandler(mod, names) {
   if (!mod) return null;
-  // direct function export
-  if (typeof mod === 'function') return { picked: '<module fn>', fn: mod };
-
-  // build list of candidate functions (named + default + nested up to depth 2)
-  let candidates = [];
-  candidates = candidates.concat(collectFns(mod));
+  if (typeof mod === 'function') return mod;
+  let candidates = collectFns(mod);
   if (mod.default) candidates = candidates.concat(collectFns(mod.default, 'default'));
-
-  const patterns = {
-    login: [/^login$/i, /^sign.?in$/i, /^authenticate$/i, /post.?login/i],
-    me: [/^me$/i, /^get.?me$/i, /^profile$/i, /^current$/i, /^user$/i],
-    logout: [/^logout$/i, /^sign.?out$/i]
-  }[kind] || [];
-
-  // 1) exact name list
-  for (const { name, fn } of candidates) {
-    if (patterns.some(r => r.test(name.split('.').pop() || ''))) {
-      return { picked: name, fn };
-    }
+  for (const n of names) {
+    const hit = candidates.find(c => c.name.split('.').pop() === n);
+    if (hit) return hit.fn;
   }
-  // 2) last-resort heuristic: any function whose name contains the keyword
-  const kw = kind === 'login' ? /log.?in|sign.?in|auth/i :
-             kind === 'logout' ? /log.?out|sign.?out/i :
-             /get.?me|me|profile|current|user/i;
-  for (const { name, fn } of candidates) {
-    if (kw.test(name)) return { picked: name, fn };
-  }
-  return null;
+  // fuzzy
+  const re = new RegExp(names.map(n => n.replace(/\W+/g, '.?')).join('|'), 'i');
+  const fuzzy = candidates.find(c => re.test(c.name));
+  return fuzzy ? fuzzy.fn : null;
 }
 
-// Load controller + middleware
+// Controllers/middleware (ongeacht exportnaam)
 const ctrlMod = safeRequire('../controllers/authController');
 const mwMod   = safeRequire('../middlewares/auth');
 
-// Pick handlers
-const loginPick  = pickHandler(ctrlMod, 'login');
-const logoutPick = pickHandler(ctrlMod, 'logout');
-const mePick     = pickHandler(ctrlMod, 'me');
+const loginHandler  = pickHandler(ctrlMod, ['login','signIn','authenticate','postLogin']);
+const logoutHandler = pickHandler(ctrlMod, ['logout','signOut']);
+const meHandler     = pickHandler(ctrlMod, ['me','getMe','profile','current']);
+const requireAuth   = pickHandler(mwMod, ['requireAuth','auth','ensureAuth','isAuthenticated','protect']);
 
-const requireAuthPick = pickHandler(mwMod, 'login')      // vaak 'auth' of 'requireAuth'
-  || pickHandler(mwMod, 'me');                           // fallback
+// Cookie helpers
+const ONE_YEAR = 60 * 60 * 24 * 365;
+function setTenantCookie(res, tenantId) {
+  const cookie = [
+    `clx_tenant=${encodeURIComponent(String(tenantId))}`,
+    'Path=/',
+    `Max-Age=${ONE_YEAR}`,
+    'HttpOnly',
+    'Secure',
+    'SameSite=None',
+  ].join('; ');
+  res.setHeader('Set-Cookie', cookie);
+}
+function clearTenantCookie(res) {
+  const cookie = [
+    'clx_tenant=',
+    'Path=/',
+    'Max-Age=0',
+    'HttpOnly',
+    'Secure',
+    'SameSite=None',
+  ].join('; ');
+  res.setHeader('Set-Cookie', cookie);
+}
 
-// Debug logging (1 regel per pick)
-console.log('[auth-router] login =', loginPick ? loginPick.picked : 'not-found');
-console.log('[auth-router] logout =', logoutPick ? logoutPick.picked : 'not-found');
-console.log('[auth-router] requireAuth =', requireAuthPick ? requireAuthPick.picked : 'not-found');
-console.log('[auth-router] me =', mePick ? mePick.picked : 'not-found');
+// ===== /api/login =====
+// Bepaal tenant uit e-maildomein en zet cookie. Daarna door naar jouw login handler.
+router.post('/login', async (req, res, next) => {
+  try {
+    const email = String(req.body?.email || '').toLowerCase();
+    const t = await getTenantByEmailDomain(email);
+    if (t?.id) {
+      setTenantCookie(res, t.id);
+      // propagate naar downstream zodat policies meteen juist zijn
+      req.tenant = t.id;
+      res.locals.tenant_id = t.id;
+      req.headers['x-tenant-id'] = t.id;
+    }
+  } catch { /* ignore tenant miss; login kan alsnog 400 geven verderop */ }
 
-// Routes
-if (loginPick) {
-  router.post('/login', (req, res, next) => loginPick.fn(req, res, next));
+  if (typeof loginHandler === 'function') return loginHandler(req, res, next);
+  return res.status(400).json({ error: 'login_handler_missing' });
+});
+
+// ===== /api/logout =====
+if (typeof logoutHandler === 'function') {
+  router.post('/logout', (req, res, next) => {
+    clearTenantCookie(res);
+    logoutHandler(req, res, next);
+  });
 } else {
-  router.post('/login', (_req, res) =>
-    res.status(400).json({ error: 'login_handler_missing', hint: 'export a function named login/signIn/authenticate' })
-  );
+  router.post('/logout', (req, res) => { clearTenantCookie(res); res.status(204).end(); });
 }
 
-if (logoutPick) {
-  router.post('/logout', (req, res, next) => logoutPick.fn(req, res, next));
-}
-
-if (requireAuthPick && mePick) {
-  router.get('/me', (req, res, next) => requireAuthPick.fn(req, res, (e) => e ? next(e) : mePick.fn(req, res, next)));
-} else if (requireAuthPick) {
-  router.get('/me', (req, res, next) => requireAuthPick.fn(req, res, (e) => e ? next(e) : res.json({ user: req.user ?? null })));
-} else if (mePick) {
-  router.get('/me', (req, res, next) => mePick.fn(req, res, next));
+// ===== /api/me =====
+if (requireAuth && meHandler) {
+  router.get('/me', requireAuth, (req, res, next) => meHandler(req, res, next));
+} else if (requireAuth) {
+  router.get('/me', requireAuth, (req, res) => res.json({ user: req.user ?? null }));
+} else if (meHandler) {
+  router.get('/me', (req, res, next) => meHandler(req, res, next));
 } else {
   router.get('/me', (_req, res) => res.json({ user: null }));
 }

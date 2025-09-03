@@ -4,11 +4,10 @@ const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 
 const { strictCors } = require('./middlewares/cors');
+const { tenantResolver } = require('./middlewares/tenant');
 const { telemetry } = require('./middlewares/telemetry');
 
-// ⬇️ voeg je AUTH router toe
 const authRouter      = require('./routes/auth');
-
 const wsTokenRouter   = require('./routes/wsToken');
 const summarizeRouter = require('./routes/summarize');
 const suggestRouter   = require('./routes/suggest');
@@ -16,14 +15,20 @@ const feedbackRouter  = require('./routes/feedback');
 
 const app = express();
 app.set('trust proxy', 1);
+app.disable('etag'); // voorkom 304 op /api/me
 
-// === CORS EERST ===
+// === CORS EERST + preflight responder ===
 app.use(strictCors);
-app.options('*', strictCors);  // Preflight responder
+app.options('*', strictCors);
 
-// Security + parsing
-app.use(helmet({ crossOriginResourcePolicy: false }));
+// JSON body parsing
 app.use(express.json({ limit: '1mb' }));
+
+// Tenant resolven VÓÓR telemetry/logging
+app.use(tenantResolver);
+
+// Security
+app.use(helmet({ crossOriginResourcePolicy: false }));
 
 // Telemetry
 app.use(telemetry);
@@ -34,20 +39,9 @@ morgan.token('rid', (_req, res) => (res?.locals?.request_id || '-'));
 app.use(morgan(':method :url :status :res[content-length] - :response-time ms tenant=:tenant rid=:rid'));
 
 // Rate limits
-const generalLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  limit: 120,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
-});
+const generalLimiter = rateLimit({ windowMs: 60 * 1000, limit: 120, standardHeaders: 'draft-7', legacyHeaders: false });
 app.use('/api/', generalLimiter);
-
-const tokenLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  limit: 20,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
-});
+const tokenLimiter = rateLimit({ windowMs: 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false });
 app.use('/api/ws-token', tokenLimiter);
 
 // Health
@@ -55,12 +49,9 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 
 /* ====================== ROUTES ====================== */
 
-// Auth router MOUNTEN zodat /api/login en /api/me bestaan
-// Meest gangbaar: routes/auth.js bevat router.post('/login') en router.get('/me')
+// Auth (zorgt voor /api/login, /api/logout, /api/me)
 app.use('/api', authRouter);
-
-// Laat voor de zekerheid ook /api/auth/* werken (mocht je front dat ooit gebruiken)
-app.use('/api/auth', authRouter);
+app.use('/api/auth', authRouter); // alias
 
 // Overige API's
 app.use('/api/ws-token', wsTokenRouter);
@@ -68,7 +59,7 @@ app.use('/api/summarize', summarizeRouter);
 app.use('/api/suggest', suggestRouter);
 app.use('/api/feedback', feedbackRouter);
 
-// Aliassen (compat met oudere front-calls)
+// Compat-aliassen
 app.use('/ws-token', wsTokenRouter);
 app.use('/api/ai/summarize', summarizeRouter);
 app.use('/api/ai/feedback', feedbackRouter);
