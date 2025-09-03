@@ -12,8 +12,24 @@ function jsonHeaders(extra?: Record<string, string>) {
 
 async function asJson<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    throw new Error(`HTTP ${res.status} ${res.statusText} ${txt}`);
+    let msg = `HTTP ${res.status} ${res.statusText}`;
+    try {
+      const ct = res.headers.get("content-type") || "";
+      if (ct.includes("application/json")) {
+        const j = await res.json();
+        if (j?.error || j?.message) {
+          msg = `${j?.error ?? ""}${j?.message ? `: ${j.message}` : ""}`.trim() || msg;
+        } else {
+          msg = JSON.stringify(j);
+        }
+      } else {
+        const t = await res.text();
+        if (t) msg = `${msg} ${t}`;
+      }
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
   }
   return (await res.json()) as T;
 }
@@ -24,7 +40,7 @@ async function postJson<T>(path: string, body: unknown, aliases: string[] = []):
     const res = await fetch(url, {
       method: "POST",
       headers: jsonHeaders(),
-      credentials: "include", // cookie-based tenant & auth
+      credentials: "include",
       body: JSON.stringify(body ?? {}),
     });
     return await asJson<T>(res);
@@ -39,7 +55,7 @@ async function postJson<T>(path: string, body: unknown, aliases: string[] = []):
           body: JSON.stringify(body ?? {}),
         });
         return await asJson<T>(r);
-      } catch {}
+      } catch { /* try next alias */ }
     }
     throw e;
   }
@@ -64,7 +80,7 @@ async function getJson<T>(path: string, aliases: string[] = []): Promise<T> {
           credentials: "include",
         });
         return await asJson<T>(r);
-      } catch {}
+      } catch { /* try next alias */ }
     }
     throw e;
   }
@@ -98,7 +114,6 @@ export async function feedback(payload: {
   if (typeof payload.feedback === "number") body.feedback = Math.max(-1, Math.min(1, payload.feedback));
   else if (payload.vote) body.feedback = payload.vote === "up" ? 1 : -1;
   else body.feedback = 0;
-
   const res = await postJson<{ ok: boolean }>("/api/feedback", body, ["/api/ai/feedback"]);
   return { ok: !!res?.ok };
 }
