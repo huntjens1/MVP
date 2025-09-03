@@ -1,6 +1,5 @@
-// Tenant-resolving via Supabase (tabel tenants: id uuid, name text, domain text, created_at).
-// - resolveTenant(): gebruikt Origin/Host + optionele header/cookie
-// - getTenantByEmailDomain(): zoekt tenant obv e-maildomein (na '@')
+// Tenant-resolving via Supabase.
+// Tabellen: public.tenants(id, name, domain), public.tenant_users(tenant_id, email, role, active)
 
 const CACHE_TTL_MS = 60_000;
 const cache = new Map(); // key -> { val, exp }
@@ -11,12 +10,6 @@ function getCache(key) {
   if (!v) return null;
   if (Date.now() > v.exp) { cache.delete(key); return null; }
   return v.val;
-}
-
-function hostFrom(origin, hostHeader) {
-  if (origin) { try { return new URL(origin).host; } catch {} }
-  if (hostHeader) return String(hostHeader).split(':')[0];
-  return null;
 }
 
 function supabaseHeaders() {
@@ -34,22 +27,39 @@ async function fetchJSON(url, headers) {
   return res.json();
 }
 
+function hostFrom(origin, hostHeader) {
+  if (origin) { try { return new URL(origin).host; } catch {} }
+  if (hostHeader) return String(hostHeader).split(':')[0];
+  return null;
+}
+
+function computeAllowedOrigins(tenantRow) {
+  const envList = String(process.env.ALLOWED_ORIGINS || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+  const arr = [...envList];
+  if (tenantRow?.domain) {
+    const d = String(tenantRow.domain).trim();
+    if (d) arr.push(`https://${d}`);
+  }
+  return Array.from(new Set(arr));
+}
+
+/* ---------- Tenants lookups ---------- */
+async function getTenantById(id) {
+  if (!id) return null;
+  const base = process.env.SUPABASE_URL;
+  if (!base) throw new Error('SUPABASE_URL missing');
+  const url = `${base.replace(/\/$/, '')}/rest/v1/tenants?select=id,name,domain&id=eq.${encodeURIComponent(id)}&limit=1`;
+  const rows = await fetchJSON(url, supabaseHeaders());
+  return Array.isArray(rows) && rows[0] ? rows[0] : null;
+}
+
 async function getTenantByDomain(domain) {
   if (!domain) return null;
   const base = process.env.SUPABASE_URL;
   if (!base) throw new Error('SUPABASE_URL missing');
-  const endpoint = `${base.replace(/\/$/, '')}/rest/v1/tenants?select=id,name,domain&domain=eq.${encodeURIComponent(domain)}&limit=1`;
-  const rows = await fetchJSON(endpoint, supabaseHeaders());
-  return Array.isArray(rows) && rows[0] ? rows[0] : null;
-}
-
-async function getTenantByIdOrName(idOrName) {
-  if (!idOrName) return null;
-  const base = process.env.SUPABASE_URL;
-  if (!base) throw new Error('SUPABASE_URL missing');
-  const enc = encodeURIComponent(idOrName);
-  const endpoint = `${base.replace(/\/$/, '')}/rest/v1/tenants?select=id,name,domain&or=(id.eq.${enc},name.eq.${enc})&limit=1`;
-  const rows = await fetchJSON(endpoint, supabaseHeaders());
+  const url = `${base.replace(/\/$/, '')}/rest/v1/tenants?select=id,name,domain&domain=eq.${encodeURIComponent(domain)}&limit=1`;
+  const rows = await fetchJSON(url, supabaseHeaders());
   return Array.isArray(rows) && rows[0] ? rows[0] : null;
 }
 
@@ -64,17 +74,30 @@ async function getTenantByEmailDomain(email) {
   return await getTenantByDomain(d);
 }
 
-function computeAllowedOrigins(tenantRow) {
-  const envList = String(process.env.ALLOWED_ORIGINS || '')
-    .split(',').map(s => s.trim()).filter(Boolean);
-  const arr = [...envList];
-  if (tenantRow?.domain) {
-    const d = String(tenantRow.domain).trim();
-    if (d) arr.push(`https://${d}`);
-  }
-  return Array.from(new Set(arr));
+async function getTenantByUserEmail(email) {
+  const base = process.env.SUPABASE_URL;
+  if (!base) throw new Error('SUPABASE_URL missing');
+  const e = String(email || '').toLowerCase().trim();
+  if (!e) return null;
+
+  // cache hit?
+  const ck = `user:${e}`;
+  const cached = getCache(ck);
+  if (cached) return cached;
+
+  // 1) lookup mapping
+  const url = `${base.replace(/\/$/, '')}/rest/v1/tenant_users?select=tenant_id&email=eq.${encodeURIComponent(e)}&active=eq.true&limit=1`;
+  const rows = await fetchJSON(url, supabaseHeaders());
+  const row = Array.isArray(rows) && rows[0] ? rows[0] : null;
+  if (!row?.tenant_id) { putCache(ck, null); return null; }
+
+  // 2) fetch tenant row
+  const tenant = await getTenantById(row.tenant_id);
+  putCache(ck, tenant || null);
+  return tenant || null;
 }
 
+/* ---------- Resolver voor middleware ---------- */
 async function resolveTenant(origin, hostHeader, headerOrCookieTenant) {
   const host = hostFrom(origin, hostHeader);
   const cacheKey = `h=${host}|hdr=${headerOrCookieTenant || ''}`;
@@ -85,7 +108,7 @@ async function resolveTenant(origin, hostHeader, headerOrCookieTenant) {
   if (host) { try { byDomain = await getTenantByDomain(host); } catch {} }
 
   let byHeader = null;
-  if (headerOrCookieTenant) { try { byHeader = await getTenantByIdOrName(headerOrCookieTenant); } catch {} }
+  if (headerOrCookieTenant) { try { byHeader = await getTenantById(headerOrCookieTenant); } catch {} }
 
   if (byDomain && headerOrCookieTenant && byHeader && String(byHeader.id) !== String(byDomain.id)) {
     const out = { id: null, name: null, domain: host, error: 'tenant_header_mismatch', allowedOrigins: computeAllowedOrigins(byDomain) };
@@ -110,5 +133,6 @@ async function resolveTenant(origin, hostHeader, headerOrCookieTenant) {
 
 module.exports = {
   resolveTenant,
+  getTenantByUserEmail,
   getTenantByEmailDomain,
 };

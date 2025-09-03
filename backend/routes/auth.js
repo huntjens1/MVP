@@ -1,12 +1,8 @@
-// CommonJS router die automatisch je bestaande auth controller/middleware vindt.
-// Belangrijk: zet/cleart 'clx_tenant' cookie op basis van e-maildomein.
-
 const express = require('express');
-const { getTenantByEmailDomain } = require('../services/tenants');
+const { getTenantByUserEmail, getTenantByEmailDomain } = require('../services/tenants');
 const router = express.Router();
 
 function safeRequire(p) { try { return require(p); } catch { return null; } }
-
 function collectFns(obj, prefix = '', out = [], depth = 0) {
   if (!obj || typeof obj !== 'object' || depth > 2) return out;
   for (const k of Object.keys(obj)) {
@@ -19,19 +15,17 @@ function collectFns(obj, prefix = '', out = [], depth = 0) {
 function pickHandler(mod, names) {
   if (!mod) return null;
   if (typeof mod === 'function') return mod;
-  let candidates = collectFns(mod);
-  if (mod.default) candidates = candidates.concat(collectFns(mod.default, 'default'));
+  let c = collectFns(mod);
+  if (mod.default) c = c.concat(collectFns(mod.default, 'default'));
   for (const n of names) {
-    const hit = candidates.find(c => c.name.split('.').pop() === n);
+    const hit = c.find(x => x.name.split('.').pop() === n);
     if (hit) return hit.fn;
   }
-  // fuzzy
   const re = new RegExp(names.map(n => n.replace(/\W+/g, '.?')).join('|'), 'i');
-  const fuzzy = candidates.find(c => re.test(c.name));
+  const fuzzy = c.find(x => re.test(x.name));
   return fuzzy ? fuzzy.fn : null;
 }
 
-// Controllers/middleware (ongeacht exportnaam)
 const ctrlMod = safeRequire('../controllers/authController');
 const mwMod   = safeRequire('../middlewares/auth');
 
@@ -40,7 +34,6 @@ const logoutHandler = pickHandler(ctrlMod, ['logout','signOut']);
 const meHandler     = pickHandler(ctrlMod, ['me','getMe','profile','current']);
 const requireAuth   = pickHandler(mwMod, ['requireAuth','auth','ensureAuth','isAuthenticated','protect']);
 
-// Cookie helpers
 const ONE_YEAR = 60 * 60 * 24 * 365;
 function setTenantCookie(res, tenantId) {
   const cookie = [
@@ -54,47 +47,54 @@ function setTenantCookie(res, tenantId) {
   res.setHeader('Set-Cookie', cookie);
 }
 function clearTenantCookie(res) {
-  const cookie = [
-    'clx_tenant=',
-    'Path=/',
-    'Max-Age=0',
-    'HttpOnly',
-    'Secure',
-    'SameSite=None',
-  ].join('; ');
+  const cookie = ['clx_tenant=','Path=/','Max-Age=0','HttpOnly','Secure','SameSite=None'].join('; ');
   res.setHeader('Set-Cookie', cookie);
 }
 
-// ===== /api/login =====
-// Bepaal tenant uit e-maildomein en zet cookie. Daarna door naar jouw login handler.
+// ---------- LOGIN ----------
 router.post('/login', async (req, res, next) => {
+  const email = String(req.body?.email || '').toLowerCase().trim();
+  const allowNoTenant = process.env.ALLOW_LOGIN_WITHOUT_TENANT === '1';
+
   try {
-    const email = String(req.body?.email || '').toLowerCase();
-    const t = await getTenantByEmailDomain(email);
+    // 1) expliciete mapping (tenant_users)
+    let t = await getTenantByUserEmail(email);
+
+    // 2) anders: fallback op e-maildomein (tenants.domain)
+    if (!t) t = await getTenantByEmailDomain(email);
+
+    if (!t?.id && !allowNoTenant) {
+      const domain = (email.split('@')[1] || '').trim();
+      return res.status(400).json({
+        error: 'tenant_for_user_not_found',
+        message: 'Geen tenant gevonden voor deze gebruiker.',
+        detail: { email, domain },
+        hint: 'Voeg user toe aan public.tenant_users of vul tenants.domain correct in. Voor dev: ALLOW_LOGIN_WITHOUT_TENANT=1',
+      });
+    }
+
     if (t?.id) {
       setTenantCookie(res, t.id);
-      // propagate naar downstream zodat policies meteen juist zijn
       req.tenant = t.id;
       res.locals.tenant_id = t.id;
       req.headers['x-tenant-id'] = t.id;
     }
-  } catch { /* ignore tenant miss; login kan alsnog 400 geven verderop */ }
+  } catch (e) {
+    return res.status(400).json({ error: 'tenant_lookup_failed', detail: e?.message || String(e) });
+  }
 
   if (typeof loginHandler === 'function') return loginHandler(req, res, next);
   return res.status(400).json({ error: 'login_handler_missing' });
 });
 
-// ===== /api/logout =====
+// ---------- LOGOUT ----------
 if (typeof logoutHandler === 'function') {
-  router.post('/logout', (req, res, next) => {
-    clearTenantCookie(res);
-    logoutHandler(req, res, next);
-  });
+  router.post('/logout', (req, res, next) => { clearTenantCookie(res); logoutHandler(req, res, next); });
 } else {
   router.post('/logout', (req, res) => { clearTenantCookie(res); res.status(204).end(); });
 }
 
-// ===== /api/me =====
+// ---------- ME ----------
 if (requireAuth && meHandler) {
   router.get('/me', requireAuth, (req, res, next) => meHandler(req, res, next));
 } else if (requireAuth) {
