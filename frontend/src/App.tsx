@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import AuthPanel from "./components/AuthPanel";
 import DashboardLayoutRouter from "./components/DashboardLayoutRouter";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -12,28 +12,29 @@ import ConversationDetail from "./components/ConversationDetail";
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<LandingPage />} />
-        <Route path="/auth" element={<AuthPanel />} />
+    <Routes>
+      <Route path="/" element={<LandingPage />} />
+      <Route path="/auth" element={<AuthPanel />} />
 
-        <Route
-          path="/app"
-          element={
-            <ProtectedRoute>
-              <DashboardLayoutRouter />
-            </ProtectedRoute>
-          }
-        >
-          {/* Subroutes voor /app/* */}
-          <Route index element={<DashboardHome />} />
-          <Route path="transcriptie" element={<CallLogixTranscriptie />} />
-          <Route path="geschiedenis" element={<OpnameGeschiedenis />} />
-          <Route path="admin" element={<AdminDashboard />} />
-          <Route path="/app/analytics" element={<Analytics />} />
-          <Route path="/app/conversations/:id" element={<ConversationDetail />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+      <Route
+        path="/app"
+        element={
+          <ProtectedRoute>
+            <DashboardLayoutRouter />
+          </ProtectedRoute>
+        }
+      >
+        {/* alle subroutes RELATIEF houden, zodat ze ProtectedRoute erven */}
+        <Route index element={<DashboardHome />} />
+        <Route path="transcriptie" element={<CallLogixTranscriptie />} />
+        <Route path="geschiedenis" element={<OpnameGeschiedenis />} />
+        <Route path="admin" element={<AdminDashboard />} />
+        <Route path="analytics" element={<Analytics />} />
+        <Route path="conversations/:id" element={<ConversationDetail />} />
+      </Route>
+
+      {/* fallback */}
+      <Route path="*" element={<Navigate to="/auth" replace />} />
+    </Routes>
   );
 }

@@ -1,3 +1,5 @@
+// Unified API client (cookie + Bearer). Production-klaar.
+
 export type WsTokenResponse = { token: string; expiresIn?: number };
 export type SuggestResponse = { suggestions: string[] };
 export type SummarizePayload = { transcript: string };
@@ -9,13 +11,19 @@ const API = BASE.replace(/\/$/, "");
 const TOKEN_KEY = "clx_token";
 
 function getToken() {
-  try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
+  try {
+    return localStorage.getItem(TOKEN_KEY) || "";
+  } catch {
+    return "";
+  }
 }
 function setToken(t?: string) {
   try {
     if (t) localStorage.setItem(TOKEN_KEY, t);
     else localStorage.removeItem(TOKEN_KEY);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 function jsonHeaders(extra?: Record<string, string>) {
@@ -41,73 +49,59 @@ async function asJson<T>(res: Response): Promise<T> {
         const t = await res.text();
         if (t) msg = `${msg} ${t}`;
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     throw new Error(msg);
   }
   return (await res.json()) as T;
 }
 
-async function postJson<T>(path: string, body: unknown, aliases: string[] = []): Promise<T> {
-  const url = `${API}${path}`;
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: jsonHeaders(),
-      credentials: "include",
-      body: JSON.stringify(body ?? {}),
-    });
-    return await asJson<T>(res);
-  } catch (e) {
-    for (const alt of aliases) {
-      const altUrl = `${API}${alt}`;
-      try {
-        const r = await fetch(altUrl, {
-          method: "POST",
-          headers: jsonHeaders(),
-          credentials: "include",
-          body: JSON.stringify(body ?? {}),
-        });
-        return await asJson<T>(r);
-      } catch { /* try next alias */ }
-    }
-    throw e;
-  }
+/* ---------- low-level ---------- */
+export async function get<T = any>(path: string): Promise<T> {
+  const res = await fetch(`${API}${path}`, {
+    method: "GET",
+    headers: jsonHeaders(),
+    credentials: "include",
+  });
+  return asJson<T>(res);
+}
+export async function post<T = any>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${API}${path}`, {
+    method: "POST",
+    headers: jsonHeaders(),
+    credentials: "include",
+    body: JSON.stringify(body ?? {}),
+  });
+  return asJson<T>(res);
+}
+export async function put<T = any>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${API}${path}`, {
+    method: "PUT",
+    headers: jsonHeaders(),
+    credentials: "include",
+    body: JSON.stringify(body ?? {}),
+  });
+  return asJson<T>(res);
+}
+export async function del<T = any>(path: string): Promise<T> {
+  const res = await fetch(`${API}${path}`, {
+    method: "DELETE",
+    headers: jsonHeaders(),
+    credentials: "include",
+  });
+  return asJson<T>(res);
 }
 
-async function getJson<T>(path: string, aliases: string[] = []): Promise<T> {
-  const url = `${API}${path}`;
-  try {
-    const res = await fetch(url, {
-      method: "GET",
-      headers: jsonHeaders(),
-      credentials: "include",
-    });
-    return await asJson<T>(res);
-  } catch (e) {
-    for (const alt of aliases) {
-      const altUrl = `${API}${alt}`;
-      try {
-        const r = await fetch(altUrl, {
-          method: "GET",
-          headers: jsonHeaders(),
-          credentials: "include",
-        });
-        return await asJson<T>(r);
-      } catch { /* try next alias */ }
-    }
-    throw e;
-  }
-}
-
-/** ===== Public API ===== */
+/* ---------- high-level (CallLogix) ---------- */
 export async function wsToken(): Promise<WsTokenResponse> {
-  const data = await postJson<Partial<WsTokenResponse>>("/api/ws-token", {}, ["/ws-token"]);
+  const data = await post<Partial<WsTokenResponse>>("/api/ws-token");
   if (!data || typeof data.token !== "string") throw new Error("Invalid ws-token payload");
   return { token: data.token, expiresIn: Number(data.expiresIn ?? 0) };
 }
 
 export async function suggestOnDemand(transcript: string, max = 5): Promise<SuggestResponse> {
-  const raw = await postJson<any>("/api/suggest", { transcript, max }, ["/api/suggestQuestion"]);
+  const raw = await post<any>("/api/suggest", { transcript, max });
   const list = Array.isArray(raw?.suggestions) ? raw.suggestions : [];
   const texts: string[] = list
     .map((item: any) => (typeof item === "string" ? item : String(item?.text ?? "").trim()))
@@ -116,8 +110,12 @@ export async function suggestOnDemand(transcript: string, max = 5): Promise<Sugg
 }
 
 export async function feedback(payload: {
-  suggestion_id?: string; suggestionId?: string; suggestion_text?: string; conversation_id?: string;
-  feedback?: -1 | 0 | 1; vote?: "up" | "down";
+  suggestion_id?: string;
+  suggestionId?: string;
+  suggestion_text?: string;
+  conversation_id?: string;
+  feedback?: -1 | 0 | 1;
+  vote?: "up" | "down";
 }): Promise<{ ok: boolean }> {
   const body: any = {
     suggestion_id: payload.suggestion_id ?? payload.suggestionId,
@@ -127,29 +125,51 @@ export async function feedback(payload: {
   if (typeof payload.feedback === "number") body.feedback = Math.max(-1, Math.min(1, payload.feedback));
   else if (payload.vote) body.feedback = payload.vote === "up" ? 1 : -1;
   else body.feedback = 0;
-  const res = await postJson<{ ok: boolean }>("/api/feedback", body, ["/api/ai/feedback"]);
+  const res = await post<{ ok: boolean }>("/api/feedback", body);
   return { ok: !!res?.ok };
 }
 
 export async function summarize(payload: SummarizePayload): Promise<SummarizeResponse> {
-  const data = await postJson<Partial<SummarizeResponse>>("/api/summarize", payload, ["/api/ai/summarize"]);
+  const data = await post<Partial<SummarizeResponse>>("/api/summarize", payload);
   return { summary: String(data?.summary ?? "") };
 }
 
+/* --- auth --- */
 export async function me(): Promise<{ user: any }> {
-  return await getJson<{ user: any }>("/api/me");
+  return get<{ user: any }>("/api/me");
 }
-
 export async function login(email: string, password: string): Promise<LoginResponse> {
-  const data = await postJson<LoginResponse>("/api/login", { email, password });
-  if (data?.token) setToken(data.token);      // <-- token opslaan (Bearer)
+  const data = await post<LoginResponse>("/api/login", { email, password });
+  if (data?.token) setToken(data.token); // Bearer naast cookie
   return data;
 }
-
 export async function logout(): Promise<void> {
-  try { await postJson("/api/logout", {}); } catch { /* ignore */ }
-  setToken(undefined);
+  try {
+    await post("/api/logout", {});
+  } finally {
+    setToken(undefined);
+  }
 }
 
-const api = { wsToken, suggestOnDemand, feedback, summarize, me, login, logout };
+/* --- (optioneel) elders gebruikte helper --- */
+export async function ingestTranscript(payload: {
+  conversation_id: string;
+  content: string;
+  is_final?: boolean;
+  speaker_label?: string;
+  speaker?: number;
+}) {
+  return post<{ ok: boolean }>("/api/transcripts", payload);
+}
+
+/* Default export */
+const api = {
+  // low-level
+  get, post, put, del,
+  // auth
+  me, login, logout,
+  // features
+  wsToken, suggestOnDemand, feedback, summarize, ingestTranscript,
+};
+
 export default api;

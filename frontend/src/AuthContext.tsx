@@ -1,82 +1,98 @@
-import { createContext, useContext, useEffect, useState } from "react";
-import api from "./api";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+// Belangrijk: importeer rechtstreeks uit de map-index.
+// We gebruiken *named* imports zodat TS exact weet dat deze bestaan.
+import {
+  me as apiMe,
+  login as apiLogin,
+  logout as apiLogout,
+} from "./api/index";
 
-type User = {
-  id: string;
-  email: string;
-  role: string;
-  tenant_id: string;
-};
+// Lokale definitie voorkomt type-resolutie-gedoe met barrels/caching
+type LoginResponse = { user: any; token?: string };
 
-type AuthContextType = {
-  user: User | null;
-  isLoading: boolean;
-  login: (email: string, password: string) => Promise<boolean>;
+type User =
+  | {
+      id: string;
+      email: string;
+      name?: string;
+      role?: string;
+      tenant_id?: string | null;
+    }
+  | null;
+
+type AuthCtx = {
+  user: User;
+  loading: boolean;
+  login: (email: string, password: string) => Promise<User>;
   logout: () => Promise<void>;
+  refresh: () => Promise<User>;
 };
 
-const AuthContext = createContext<AuthContextType>({
-  user: null,
-  isLoading: false,
-  login: async () => false,
-  logout: async () => {},
-});
+const Ctx = createContext<AuthCtx | null>(null);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<User>(null);
+  const [loading, setLoading] = useState(true);
 
-  // 1) Bij mount: check cookie via backend
+  // Sessie laden bij app-start (Bearer + cookies)
   useEffect(() => {
+    let alive = true;
     (async () => {
       try {
-        const res = await api.get("/api/me");
-        if (res.authenticated && res.user) {
-          setUser(res.user);
-        } else {
-          setUser(null);
-        }
+        const res = await apiMe();
+        if (!alive) return;
+        setUser(res?.user ?? null);
       } catch {
+        if (!alive) return;
         setUser(null);
       } finally {
-        setIsLoading(false);
+        if (alive) setLoading(false);
       }
     })();
+    return () => {
+      alive = false;
+    };
   }, []);
 
-  // 2) Login → backend zet cookie
-  async function login(email: string, password: string): Promise<boolean> {
-    setIsLoading(true);
-    try {
-      const res = await api.post("/api/login", { email, password });
-      if (res?.ok && res?.user) {
-        setUser(res.user);
-        return true;
-      }
-      return false;
-    } catch {
-      return false;
-    } finally {
-      setIsLoading(false);
-    }
-  }
+  const login = async (email: string, password: string) => {
+    const res: LoginResponse = await apiLogin(email, password);
+    const u = res?.user ?? null;
+    setUser(u);
+    return u;
+  };
 
-  // 3) Logout → backend cleart cookie
-  async function logout() {
+  const logout = async () => {
     try {
-      await api.post("/api/logout");
+      await apiLogout();
     } finally {
       setUser(null);
     }
-  }
+  };
 
-  return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout }}>
-      {children}
-    </AuthContext.Provider>
+  const refresh = async () => {
+    const res = await apiMe();
+    const u = res?.user ?? null;
+    setUser(u);
+    return u;
+  };
+
+  const value = useMemo<AuthCtx>(
+    () => ({ user, loading, login, logout, refresh }),
+    [user, loading]
   );
+
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
-export function useAuth() {
-  return useContext(AuthContext);
+export function useAuth(): AuthCtx {
+  const ctx = useContext(Ctx);
+  if (!ctx) throw new Error("useAuth must be used within <AuthProvider>");
+  return ctx;
 }

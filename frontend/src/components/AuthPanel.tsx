@@ -1,61 +1,82 @@
-import { useState, useEffect } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import React, { useState } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 
 export default function AuthPanel() {
-  const { isLoading, user, login } = useAuth();
+  const { login } = useAuth();
+  const nav = useNavigate();
+  const loc = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const navigate = useNavigate();
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!isLoading && user) navigate("/app", { replace: true });
-  }, [isLoading, user, navigate]);
-
-  async function handleSignIn(e: React.FormEvent) {
+  const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
+    setError(null);
+    setSubmitting(true);
     try {
-      await login(email, password); // backend zet clx_tenant cookie obv e-maildomein
-    } catch (err: any) {
-      setError(err?.response?.data?.error || "Login mislukt");
+      const u = await login(email, password);
+      if (!u) throw new Error("Login mislukt.");
+      // Belangrijk: naar /app (niet /dashboard)
+      const dest = (loc.state as any)?.from?.pathname || "/app";
+      nav(dest, { replace: true });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
     }
-  }
+  };
 
   return (
-    <main className="flex flex-col min-h-screen bg-calllogix-dark text-calllogix-text items-center justify-center">
-      <div className="max-w-md w-full p-8 bg-calllogix-card rounded-2xl shadow-2xl flex flex-col gap-6 mt-24">
-        <h1 className="text-3xl font-black text-calllogix-primary text-center">Inloggen</h1>
-
-        <form className="flex flex-col gap-4" onSubmit={handleSignIn}>
+    <div style={{ maxWidth: 360, margin: "64px auto", padding: 24, border: "1px solid #e5e7eb", borderRadius: 12 }}>
+      <h1 style={{ margin: "0 0 16px", fontSize: 22, fontWeight: 700 }}>Inloggen</h1>
+      <form onSubmit={onSubmit} style={{ display: "grid", gap: 12 }}>
+        <label style={{ display: "grid", gap: 6 }}>
+          <span>E-mail</span>
           <input
-            type="email" required placeholder="E-mailadres"
-            className="px-4 py-2 rounded-xl border border-calllogix-primary bg-calllogix-dark text-calllogix-text"
-            value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            autoComplete="email"
+            placeholder="jij@bedrijf.nl"
+            style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db" }}
           />
-          <input
-            type="password" required placeholder="Wachtwoord"
-            className="px-4 py-2 rounded-xl border border-calllogix-primary bg-calllogix-dark text-calllogix-text"
-            value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password"
-          />
-          {error && <div className="text-red-500 font-bold">{error}</div>}
-          <button
-            type="submit"
-            className="bg-calllogix-primary text-calllogix-text font-bold px-4 py-2 rounded-xl hover:bg-calllogix-accent hover:text-calllogix-dark transition"
-            disabled={isLoading}
-          >
-            Inloggen
-          </button>
-          {isLoading && <div className="text-calllogix-subtext text-sm">Bezig met laden...</div>}
-        </form>
+        </label>
 
-        <div className="flex flex-col gap-2">
-          <Link to="/" className="text-calllogix-primary underline text-sm font-semibold text-center">
-            ← Terug naar landingspagina
-          </Link>
-        </div>
-      </div>
-    </main>
+        <label style={{ display: "grid", gap: 6 }}>
+          <span>Wachtwoord</span>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            autoComplete="current-password"
+            placeholder="••••••••"
+            style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db" }}
+          />
+        </label>
+
+        {error ? <div style={{ color: "#b91c1c", fontSize: 14 }}>{error}</div> : null}
+
+        <button
+          disabled={submitting}
+          type="submit"
+          style={{
+            marginTop: 8,
+            padding: "10px 12px",
+            borderRadius: 8,
+            border: "1px solid transparent",
+            background: submitting ? "#9ca3af" : "#111827",
+            color: "white",
+            cursor: submitting ? "not-allowed" : "pointer",
+            fontWeight: 600,
+          }}
+        >
+          {submitting ? "Bezig..." : "Inloggen"}
+        </button>
+      </form>
+    </div>
   );
 }
