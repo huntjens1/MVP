@@ -13,6 +13,9 @@ function parseCookies(cookieHeader) {
 }
 
 async function tenantResolver(req, res, next) {
+  // ⚠️ Preflight/HEAD: nooit tenant vereisen
+  if (req.method === 'OPTIONS' || req.method === 'HEAD') return next();
+
   const origin = req.headers.origin || '';
   const host = req.headers.host || '';
   const cookies = parseCookies(req.headers.cookie || '');
@@ -26,7 +29,7 @@ async function tenantResolver(req, res, next) {
 
     req.tenant = t.id;
     res.locals.tenant_id = t.id;
-    req.headers['x-tenant-id'] = t.id;
+    req.headers['x-tenant-id'] = t.id; // downstream compat
     res.locals.tenant_allowed_origins = Array.isArray(t.allowedOrigins) ? t.allowedOrigins : [];
     return next();
   } catch (e) {

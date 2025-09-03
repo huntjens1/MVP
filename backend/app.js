@@ -15,45 +15,42 @@ const feedbackRouter  = require('./routes/feedback');
 
 const app = express();
 app.set('trust proxy', 1);
-app.disable('etag'); // voorkom 304 op /api/me
+app.disable('etag'); // voorkom 304-responses op /api/me
 
 // === CORS EERST + preflight responder ===
 app.use(strictCors);
 app.options('*', strictCors);
 
-// JSON body parsing
+// === BODY PARSER ===
 app.use(express.json({ limit: '1mb' }));
 
-// Tenant resolven VÓÓR telemetry/logging
+// === TENANT RESOLVER (na CORS, vóór security/logging/routes) ===
 app.use(tenantResolver);
 
-// Security
+// === SECURITY ===
 app.use(helmet({ crossOriginResourcePolicy: false }));
 
-// Telemetry
+// === TELEMETRY ===
 app.use(telemetry);
 
-// Logging met tenant + request-id
+// === LOGGING ===
 morgan.token('tenant', (_req, res) => (res?.locals?.tenant_id || 'unknown'));
 morgan.token('rid', (_req, res) => (res?.locals?.request_id || '-'));
 app.use(morgan(':method :url :status :res[content-length] - :response-time ms tenant=:tenant rid=:rid'));
 
-// Rate limits
+// === RATE LIMITS ===
 const generalLimiter = rateLimit({ windowMs: 60 * 1000, limit: 120, standardHeaders: 'draft-7', legacyHeaders: false });
 app.use('/api/', generalLimiter);
 const tokenLimiter = rateLimit({ windowMs: 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false });
 app.use('/api/ws-token', tokenLimiter);
 
-// Health
+// === HEALTH ===
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 /* ====================== ROUTES ====================== */
+app.use('/api', authRouter);             // /api/login, /api/logout, /api/me
+app.use('/api/auth', authRouter);        // alias
 
-// Auth (zorgt voor /api/login, /api/logout, /api/me)
-app.use('/api', authRouter);
-app.use('/api/auth', authRouter); // alias
-
-// Overige API's
 app.use('/api/ws-token', wsTokenRouter);
 app.use('/api/summarize', summarizeRouter);
 app.use('/api/suggest', suggestRouter);
