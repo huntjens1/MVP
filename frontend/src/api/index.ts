@@ -2,12 +2,27 @@ export type WsTokenResponse = { token: string; expiresIn?: number };
 export type SuggestResponse = { suggestions: string[] };
 export type SummarizePayload = { transcript: string };
 export type SummarizeResponse = { summary: string };
+export type LoginResponse = { user: any; token?: string };
 
 const BASE = (import.meta.env.VITE_API_BASE_URL ?? "") as string;
 const API = BASE.replace(/\/$/, "");
+const TOKEN_KEY = "clx_token";
+
+function getToken() {
+  try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
+}
+function setToken(t?: string) {
+  try {
+    if (t) localStorage.setItem(TOKEN_KEY, t);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch { /* ignore */ }
+}
 
 function jsonHeaders(extra?: Record<string, string>) {
-  return { "Content-Type": "application/json", ...(extra || {}) };
+  const h: Record<string, string> = { "Content-Type": "application/json", ...(extra || {}) };
+  const t = getToken();
+  if (t) h["Authorization"] = `Bearer ${t}`;
+  return h;
 }
 
 async function asJson<T>(res: Response): Promise<T> {
@@ -26,9 +41,7 @@ async function asJson<T>(res: Response): Promise<T> {
         const t = await res.text();
         if (t) msg = `${msg} ${t}`;
       }
-    } catch {
-      /* ignore */
-    }
+    } catch { /* ignore */ }
     throw new Error(msg);
   }
   return (await res.json()) as T;
@@ -127,9 +140,16 @@ export async function me(): Promise<{ user: any }> {
   return await getJson<{ user: any }>("/api/me");
 }
 
-export async function login(email: string, password: string) {
-  return await postJson<any>("/api/login", { email, password });
+export async function login(email: string, password: string): Promise<LoginResponse> {
+  const data = await postJson<LoginResponse>("/api/login", { email, password });
+  if (data?.token) setToken(data.token);      // <-- token opslaan (Bearer)
+  return data;
 }
 
-const api = { wsToken, suggestOnDemand, feedback, summarize, me, login };
+export async function logout(): Promise<void> {
+  try { await postJson("/api/logout", {}); } catch { /* ignore */ }
+  setToken(undefined);
+}
+
+const api = { wsToken, suggestOnDemand, feedback, summarize, me, login, logout };
 export default api;
