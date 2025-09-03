@@ -1,5 +1,5 @@
-// Tenant-resolving via Supabase.
-// Tabellen: public.tenants(id, name, domain), public.tenant_users(tenant_id, email, role, active)
+// Tenant + user mapping resolvers via Supabase REST.
+// Tabellen: public.tenants(id,name,domain), public.tenant_users(tenant_id,email,role,active)
 
 const CACHE_TTL_MS = 60_000;
 const cache = new Map(); // key -> { val, exp }
@@ -17,7 +17,6 @@ function supabaseHeaders() {
   if (!key) throw new Error('SUPABASE_SERVICE_ROLE_KEY missing');
   return { apikey: key, Authorization: `Bearer ${key}`, Accept: 'application/json' };
 }
-
 async function fetchJSON(url, headers) {
   const res = await fetch(url, { headers });
   if (!res.ok) {
@@ -32,7 +31,6 @@ function hostFrom(origin, hostHeader) {
   if (hostHeader) return String(hostHeader).split(':')[0];
   return null;
 }
-
 function computeAllowedOrigins(tenantRow) {
   const envList = String(process.env.ALLOWED_ORIGINS || '')
     .split(',').map(s => s.trim()).filter(Boolean);
@@ -44,7 +42,6 @@ function computeAllowedOrigins(tenantRow) {
   return Array.from(new Set(arr));
 }
 
-/* ---------- Tenants lookups ---------- */
 async function getTenantById(id) {
   if (!id) return null;
   const base = process.env.SUPABASE_URL;
@@ -53,7 +50,6 @@ async function getTenantById(id) {
   const rows = await fetchJSON(url, supabaseHeaders());
   return Array.isArray(rows) && rows[0] ? rows[0] : null;
 }
-
 async function getTenantByDomain(domain) {
   if (!domain) return null;
   const base = process.env.SUPABASE_URL;
@@ -67,37 +63,34 @@ function emailDomain(email) {
   const m = String(email || '').toLowerCase().match(/@([^>\s]+)/);
   return m ? m[1] : null;
 }
-
 async function getTenantByEmailDomain(email) {
   const d = emailDomain(email);
   if (!d) return null;
   return await getTenantByDomain(d);
 }
 
-async function getTenantByUserEmail(email) {
+/** Haal mapping uit tenant_users + rol; levert { tenant, role } of null */
+async function getTenantForUserEmail(email) {
   const base = process.env.SUPABASE_URL;
   if (!base) throw new Error('SUPABASE_URL missing');
   const e = String(email || '').toLowerCase().trim();
   if (!e) return null;
 
-  // cache hit?
   const ck = `user:${e}`;
   const cached = getCache(ck);
-  if (cached) return cached;
+  if (cached !== undefined) return cached;
 
-  // 1) lookup mapping
-  const url = `${base.replace(/\/$/, '')}/rest/v1/tenant_users?select=tenant_id&email=eq.${encodeURIComponent(e)}&active=eq.true&limit=1`;
+  const url = `${base.replace(/\/$/, '')}/rest/v1/tenant_users?select=tenant_id,role,active&email=eq.${encodeURIComponent(e)}&active=eq.true&limit=1`;
   const rows = await fetchJSON(url, supabaseHeaders());
   const row = Array.isArray(rows) && rows[0] ? rows[0] : null;
   if (!row?.tenant_id) { putCache(ck, null); return null; }
 
-  // 2) fetch tenant row
   const tenant = await getTenantById(row.tenant_id);
-  putCache(ck, tenant || null);
-  return tenant || null;
+  const out = tenant ? { tenant, role: row.role || 'agent' } : null;
+  putCache(ck, out);
+  return out;
 }
 
-/* ---------- Resolver voor middleware ---------- */
 async function resolveTenant(origin, hostHeader, headerOrCookieTenant) {
   const host = hostFrom(origin, hostHeader);
   const cacheKey = `h=${host}|hdr=${headerOrCookieTenant || ''}`;
@@ -133,6 +126,6 @@ async function resolveTenant(origin, hostHeader, headerOrCookieTenant) {
 
 module.exports = {
   resolveTenant,
-  getTenantByUserEmail,
   getTenantByEmailDomain,
+  getTenantForUserEmail,
 };
