@@ -4,30 +4,51 @@ const url = require("url");
 
 const DG_WS = "wss://api.deepgram.com/v1/listen";
 
+// Alleen geldige, door DG realtime geaccepteerde keys whitelisten.
+// Let op: 'punctuate' NIET meesturen op nova-2 (kan 400 geven).
+const PASS_KEYS = [
+  "model",
+  "language",
+  "encoding",      // linear16
+  "sample_rate",   // 16000
+  "smart_format",  // true
+  "interim_results",
+  "diarize",
+  "utterance_end_ms",
+  // voeg hier extra veilige keys toe wanneer nodig:
+  // "keywords", "search", "filler_words", "profanity_filter"
+];
+
 function buildDGUrl(q) {
   const u = new URL(DG_WS);
-  const pass = [
-    "model", "language", "encoding", "codec", "sample_rate", "smart_format",
-    "interim_results", "punctuate", "diarize", "utterance_end_ms", "keywords",
-  ];
-  if (q.codec && !q.encoding) u.searchParams.set("encoding", q.codec);
+
+  // mapping: als 'codec' binnenkomt -> naar 'encoding'
+  if (q.codec && !q.encoding) u.searchParams.set("encoding", String(q.codec));
   if (q.sample_rate) u.searchParams.set("sample_rate", String(q.sample_rate));
-  pass.forEach((k) => {
+
+  for (const k of PASS_KEYS) {
     const v = q[k];
     if (v !== undefined && v !== null && String(v).length) {
       u.searchParams.set(k, String(v));
     }
-  });
+  }
+
+  // Defaults afdwingen
   if (!u.searchParams.get("model")) u.searchParams.set("model", "nova-2");
   if (!u.searchParams.get("language")) u.searchParams.set("language", "nl");
   if (!u.searchParams.get("encoding")) u.searchParams.set("encoding", "linear16");
   if (!u.searchParams.get("sample_rate")) u.searchParams.set("sample_rate", "16000");
+  if (!u.searchParams.get("smart_format")) u.searchParams.set("smart_format", "true");
+  if (!u.searchParams.get("interim_results")) u.searchParams.set("interim_results", "true");
+  if (!u.searchParams.get("utterance_end_ms")) u.searchParams.set("utterance_end_ms", "800");
+
   return u.toString();
 }
 
 function setupMicWs(server, app, logger = console) {
   const wss = new WebSocket.Server({ noServer: true });
 
+  // Upgrade alleen op /ws/mic
   server.on("upgrade", (req, socket, head) => {
     const { pathname } = url.parse(req.url);
     if (pathname !== "/ws/mic") return;
@@ -51,8 +72,37 @@ function setupMicWs(server, app, logger = console) {
     const dgUrl = buildDGUrl(q);
     logger.info(`[DG] open rid=${rid} tenant=${tenantId} url=${dgUrl}`);
 
+    // Maak WS naar Deepgram met Authorization header (ephemeral token)
     const dgWs = new WebSocket(dgUrl, {
-      headers: { Authorization: `Token ${token}` }, // << ephemeral token
+      headers: {
+        Authorization: `Token ${token}`,
+        // Eventueel kan een user-agent helpen bij support/debug:
+        "User-Agent": "CallLogix/1.0",
+      },
+    });
+
+    // >>> Kritische diagnose: log de echte 4xx/5xx respons en body
+    dgWs.on("unexpected-response", (request, response) => {
+      let body = "";
+      response.on("data", (chunk) => (body += chunk.toString()));
+      response.on("end", () => {
+        logger.error(
+          `[DG400] rid=${rid} status=${response.statusCode} headers=${JSON.stringify(
+            response.headers
+          )} body=${body}`
+        );
+        try {
+          clientWs.send(
+            JSON.stringify({
+              type: "error",
+              source: "deepgram_handshake",
+              status: response.statusCode,
+              body,
+            })
+          );
+        } catch {}
+        try { clientWs.close(1011, "dg_unexpected_response"); } catch {}
+      });
     });
 
     let dgOpen = false;
@@ -69,6 +119,7 @@ function setupMicWs(server, app, logger = console) {
     dgWs.on("open", () => {
       dgOpen = true;
       logger.info(`[DG] connected rid=${rid}`);
+      // flush gebufferde audio
       for (const part of queue) {
         try { dgWs.send(part); } catch {}
       }
@@ -76,6 +127,7 @@ function setupMicWs(server, app, logger = console) {
     });
 
     dgWs.on("message", (data) => {
+      // DG → client (JSON string of Buffer) 1:1 doorzetten
       try { clientWs.send(data); } catch {}
     });
 
@@ -91,7 +143,9 @@ function setupMicWs(server, app, logger = console) {
       safeClose(code, reason);
     });
 
+    // Client audio → DG
     clientWs.on("message", (data) => {
+      // Verwacht Int16LE frames (~640 bytes = 320 samples @16kHz)
       if (!dgOpen) queue.push(data);
       else { try { dgWs.send(data); } catch {} }
     });
@@ -106,6 +160,7 @@ function setupMicWs(server, app, logger = console) {
       safeClose(code, reason);
     });
 
+    // keepalive (sommige proxies waarderen dit)
     const ka = setInterval(() => { try { dgWs.ping(); } catch {} }, 15000);
     clientWs.on("close", () => clearInterval(ka));
     dgWs.on("close", () => clearInterval(ka));
@@ -114,6 +169,5 @@ function setupMicWs(server, app, logger = console) {
   logger.info("[DG] bridge mounted at /ws/mic");
 }
 
-// export beide vormen: default functie én .setupMicWs alias
 module.exports = setupMicWs;
 module.exports.setupMicWs = setupMicWs;
