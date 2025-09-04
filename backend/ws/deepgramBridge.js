@@ -1,124 +1,135 @@
-// Deepgram mic bridge: client PCM/Opus -> Deepgram WS
-const { WebSocketServer, WebSocket } = require('ws');
-const url = require('url');
+// backend/ws/deepgramBridge.js
+const WebSocket = require("ws");
+const url = require("url");
 
-function setupMicWs(server) {
-  const wss = new WebSocketServer({ noServer: true });
+const DG_WS = "wss://api.deepgram.com/v1/listen";
 
-  server.on('upgrade', (req, socket, head) => {
-    let pathname;
-    try {
-      pathname = new URL(req.url, `http://${req.headers.host}`).pathname;
-    } catch {
-      socket.destroy();
-      return;
+function buildDGUrl(q) {
+  // accepteer whitelist van query’s
+  const u = new URL(DG_WS);
+  const pass = [
+    "model", "language", "encoding", "codec", "sample_rate", "smart_format",
+    "interim_results", "punctuate", "diarize", "utterance_end_ms", "keywords",
+  ];
+  // mapping codec -> encoding voor DG
+  if (q.codec && !q.encoding) u.searchParams.set("encoding", q.codec);
+  if (q.sample_rate) u.searchParams.set("sample_rate", String(q.sample_rate));
+
+  pass.forEach((k) => {
+    const v = q[k];
+    if (v !== undefined && v !== null && String(v).length) {
+      u.searchParams.set(k, String(v));
     }
-    if (pathname !== '/ws/mic') {
-      socket.destroy();
-      return;
-    }
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      wss.emit('connection', ws, req);
-    });
   });
-
-  wss.on('connection', (clientWs, req) => {
-    const { query } = url.parse(req.url, true);
-
-    const {
-      token,
-      codec = 'linear16',
-      sample_rate = '16000',
-      model = 'nova-2',
-      smart_format = 'true',
-      interim_results = 'true',
-      punctuate = 'true',
-      diarize = 'false',
-      language = 'nl',
-    } = query || {};
-
-    const DG_TOKEN =
-      (typeof token === 'string' && token) ||
-      process.env.DEEPGRAM_API_KEY ||
-      '';
-
-    if (!DG_TOKEN) {
-      try { clientWs.close(1011, 'deepgram_token_missing'); } catch {}
-      return;
-    }
-
-    const dgUrl = new URL('wss://api.deepgram.com/v1/listen');
-    dgUrl.searchParams.set('encoding', codec === 'opus' ? 'opus' : 'linear16');
-    dgUrl.searchParams.set('sample_rate', String(sample_rate || '16000'));
-    dgUrl.searchParams.set('model', model);
-    dgUrl.searchParams.set('language', language);
-    dgUrl.searchParams.set('smart_format', String(smart_format));
-    dgUrl.searchParams.set('interim_results', String(interim_results));
-    dgUrl.searchParams.set('punctuate', String(punctuate));
-    dgUrl.searchParams.set('diarize', String(diarize));
-
-    // Maak Deepgram WS
-    const dgWs = new WebSocket(dgUrl.toString(), {
-      headers: { Authorization: `Token ${DG_TOKEN}` },
-    });
-
-    // Buffer audioframes tot DG open is (voorkomt verlies van vroege frames)
-    const queue = [];
-    let openDG = false;
-
-    const flushQueue = () => {
-      if (!openDG) return;
-      while (queue.length) {
-        const chunk = queue.shift();
-        try { dgWs.send(chunk, { binary: true }); } catch {}
-      }
-    };
-
-    // Keepalive
-    let pingIv = null;
-    const startPinger = () => {
-      if (pingIv) return;
-      pingIv = setInterval(() => {
-        try { if (clientWs.readyState === WebSocket.OPEN) clientWs.ping(); } catch {}
-        try { if (dgWs.readyState === WebSocket.OPEN) dgWs.ping(); } catch {}
-      }, 15000);
-    };
-    const stopPinger = () => { if (pingIv) clearInterval(pingIv); pingIv = null; };
-
-    // Client->DG: voeg handler meteen toe en buffer indien nodig
-    clientWs.on('message', (data) => {
-      if (openDG && dgWs.readyState === WebSocket.OPEN) {
-        try { dgWs.send(data, { binary: true }); } catch {}
-      } else {
-        queue.push(data);
-      }
-    });
-
-    // DG open: flush buffer
-    dgWs.on('open', () => {
-      openDG = true;
-      startPinger();
-      flushQueue();
-    });
-
-    // DG -> Client (JSON text)
-    dgWs.on('message', (data) => {
-      if (clientWs.readyState === WebSocket.OPEN) {
-        try { clientWs.send(data); } catch {}
-      }
-    });
-
-    // Cleanup
-    const cleanup = () => {
-      stopPinger();
-      try { dgWs.close(); } catch {}
-      try { clientWs.close(); } catch {}
-    };
-    clientWs.on('close', cleanup);
-    clientWs.on('error', cleanup);
-    dgWs.on('close', cleanup);
-    dgWs.on('error', cleanup);
-  });
+  // defaults die we willen afdwingen
+  if (!u.searchParams.get("model")) u.searchParams.set("model", "nova-2");
+  if (!u.searchParams.get("language")) u.searchParams.set("language", "nl");
+  if (!u.searchParams.get("encoding")) u.searchParams.set("encoding", "linear16");
+  if (!u.searchParams.get("sample_rate")) u.searchParams.set("sample_rate", "16000");
+  return u.toString();
 }
 
-module.exports = { setupMicWs };
+module.exports = function attachDeepgramBridge(server, app, logger = console) {
+  const wss = new WebSocket.Server({ noServer: true });
+
+  // HTTP → WS upgrade alleen voor /ws/mic
+  server.on("upgrade", (req, socket, head) => {
+    const { pathname } = url.parse(req.url);
+    if (pathname !== "/ws/mic") return;
+
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit("connection", ws, req);
+    });
+  });
+
+  wss.on("connection", (clientWs, req) => {
+    const parsed = url.parse(req.url, true);
+    const q = parsed.query || {};
+
+    const tenantId = req.headers["x-tenant-id"] || "unknown";
+    const rid = q.conversation_id || "rid-" + Math.random().toString(36).slice(2);
+
+    const token = q.token;
+    if (!token || typeof token !== "string") {
+      try { clientWs.close(1008, "missing_token"); } catch {}
+      return;
+    }
+
+    const dgUrl = buildDGUrl(q);
+    logger.info(`[DG] open rid=${rid} tenant=${tenantId} url=${dgUrl}`);
+
+    // Verbind naar Deepgram realtime
+    const dgWs = new WebSocket(dgUrl, {
+      headers: {
+        Authorization: `Token ${token}`, // << ephemeral token hier
+      },
+    });
+
+    let dgOpen = false;
+    const queue = []; // buffer audio totdat DG open is
+    let closed = false;
+
+    const safeClose = (code = 1000, reason = "") => {
+      if (closed) return;
+      closed = true;
+      try { clientWs.close(code, reason); } catch {}
+      try { dgWs.close(code, reason); } catch {}
+    };
+
+    dgWs.on("open", () => {
+      dgOpen = true;
+      logger.info(`[DG] connected rid=${rid}`);
+      // flush audio
+      for (const part of queue) {
+        try { dgWs.send(part); } catch {}
+      }
+      queue.length = 0;
+    });
+
+    dgWs.on("message", (data) => {
+      // Alles 1:1 door naar client (JSON strings/buffers)
+      try { clientWs.send(data); } catch {}
+    });
+
+    dgWs.on("error", (err) => {
+      logger.error(`[DG] error rid=${rid} ${err?.message || err}`);
+      try {
+        clientWs.send(JSON.stringify({ type: "error", source: "deepgram", message: String(err?.message || err) }));
+      } catch {}
+    });
+
+    dgWs.on("close", (code, reason) => {
+      logger.warn(`[DG] closed rid=${rid} code=${code} reason=${reason}`);
+      safeClose(code, reason);
+    });
+
+    // Client audio → DG
+    clientWs.on("message", (data) => {
+      // verwacht audio binary Int16 LE chunks (640 bytes)
+      if (!dgOpen) {
+        queue.push(data);
+      } else {
+        try { dgWs.send(data); } catch {}
+      }
+    });
+
+    clientWs.on("error", (err) => {
+      logger.error(`[WS] client error rid=${rid} ${err?.message || err}`);
+      safeClose(1011, "client_err");
+    });
+
+    clientWs.on("close", (code, reason) => {
+      logger.info(`[WS] client closed rid=${rid} code=${code} reason=${reason}`);
+      safeClose(code, reason);
+    });
+
+    // keepalive naar DG (sommige proxies houden hiervan)
+    const ka = setInterval(() => {
+      try { dgWs.ping(); } catch {}
+    }, 15000);
+    clientWs.on("close", () => clearInterval(ka));
+    dgWs.on("close", () => clearInterval(ka));
+  });
+
+  logger.info("[DG] bridge mounted at /ws/mic");
+};

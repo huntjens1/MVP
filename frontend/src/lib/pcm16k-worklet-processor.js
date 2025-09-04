@@ -1,25 +1,23 @@
 /* @ts-nocheck */
 /**
  * PCM16KProcessor
- * - Resamplet input (meestal 48 kHz) naar 16 kHz mono
- * - Buffert tot FRAME_SAMPLES (320 = ~20ms) en post pas dan
- * - Stuurt Int16 little-endian chunks terug naar main thread
+ * - Resample 48k/44.1k -> 16k mono
+ * - Buffer tot 320 samples (20ms @16kHz)
+ * - Post Int16 LE frames van exact 320 samples (640 bytes)
  */
 class PCM16KProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.inSampleRate = sampleRate;  // door AudioContext gezet
+    this.inSampleRate = sampleRate;
     this.outSampleRate = 16000;
     this.ratio = this.inSampleRate / this.outSampleRate;
 
-    this.FRAME_SAMPLES = 320; // 20ms @16kHz
-    this.parts = [];          // verzameling Int16Array stukjes
-    this.totalLen = 0;        // totaal aantal samples in parts
+    this.FRAME_SAMPLES = 320; // 20ms @16k
+    this.parts = [];
+    this.totalLen = 0;
   }
 
-  static get parameterDescriptors() {
-    return [];
-  }
+  static get parameterDescriptors() { return []; }
 
   _append(int16arr) {
     if (!int16arr || int16arr.length === 0) return;
@@ -28,7 +26,6 @@ class PCM16KProcessor extends AudioWorkletProcessor {
   }
 
   _drainExact(n) {
-    // Neem exact n samples uit parts en retourneer nieuwe Int16Array(n)
     const out = new Int16Array(n);
     let filled = 0;
     while (filled < n && this.parts.length) {
@@ -40,7 +37,7 @@ class PCM16KProcessor extends AudioWorkletProcessor {
         this.parts.shift();
       } else {
         out.set(head.subarray(0, need), filled);
-        this.parts[0] = head.subarray(need); // rest terug
+        this.parts[0] = head.subarray(need);
         filled += need;
       }
     }
@@ -52,8 +49,7 @@ class PCM16KProcessor extends AudioWorkletProcessor {
     const input = inputs[0];
     if (!input || !input[0]) return true;
 
-    const ch = input[0]; // neem kanaal 0
-    // Resample 48k -> 16k met eenvoudige lineaire interpolatie
+    const ch = input[0];
     const outLen = Math.floor(ch.length / this.ratio);
     const out = new Int16Array(outLen);
 
@@ -62,19 +58,16 @@ class PCM16KProcessor extends AudioWorkletProcessor {
       const i0 = Math.floor(idx);
       const i1 = Math.min(i0 + 1, ch.length - 1);
       const frac = idx - i0;
-      const s = ch[i0] * (1 - frac) + ch[i1] * frac; // float [-1,1]
+      const s = ch[i0] * (1 - frac) + ch[i1] * frac;
       const clamped = Math.max(-1, Math.min(1, s));
       out[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
     }
 
-    // Buffer dit stukje en post alleen in 320-sample frames
     this._append(out);
     while (this.totalLen >= this.FRAME_SAMPLES) {
       const frame = this._drainExact(this.FRAME_SAMPLES);
-      // postMessage + transfer buffer
-      this.port.postMessage(frame, [frame.buffer]);
+      this.port.postMessage(frame, [frame.buffer]); // 640 bytes
     }
-
     return true;
   }
 }

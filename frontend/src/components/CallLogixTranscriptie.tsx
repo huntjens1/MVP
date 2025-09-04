@@ -54,10 +54,12 @@ export default function CallLogixTranscriptie() {
     const url = new URL(`${wssBase}/ws/mic`);
     url.searchParams.set("conversation_id", convoIdRef.current);
     url.searchParams.set("token", token);
+
+    // client → backend (bridge) metadata:
     url.searchParams.set("codec", "linear16");
     url.searchParams.set("sample_rate", "16000");
     url.searchParams.set("language", "nl");
-    url.searchParams.set("model", "nova-2");        // << expliciet
+    url.searchParams.set("model", "nova-2");           // << belangrijk
     url.searchParams.set("smart_format", "true");
     url.searchParams.set("interim_results", "true");
     url.searchParams.set("punctuate", "true");
