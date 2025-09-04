@@ -1,59 +1,75 @@
-import { LayoutDashboard, Mic, History, Users } from "lucide-react";
-import { useAuth } from "../AuthContext";
+import { Outlet, NavLink } from "react-router-dom";
 import TopBar from "./TopBar";
-import type { ReactNode } from "react";
 
-const BASE_TABS = [
-  { name: "Dashboard", icon: LayoutDashboard, path: "/app" },
-  { name: "Nieuwe opname", icon: Mic, path: "/app/transcriptie" },
-  { name: "Opname geschiedenis", icon: History, path: "/app/geschiedenis" },
-];
-
-export default function DashboardLayout({ activeTab, setTab, children }: {
-  activeTab: string,
-  setTab: (tab: string) => void,
-  children: ReactNode
-}) {
-  const { user } = useAuth();
-  const isSuperAdmin = user?.role === "superadmin";
-  const TABS = isSuperAdmin
-    ? [
-        ...BASE_TABS,
-        { name: "Gebruikersbeheer", icon: Users, path: "/app/admin" },
-      ]
-    : BASE_TABS;
-
+export default function DashboardLayout() {
   return (
-    <div className="flex min-h-screen bg-calllogix-dark relative">
-      <TopBar />
-      <aside className="w-64 bg-blue-900 text-white flex flex-col py-8 px-4 shadow-lg">
-        <div className="text-2xl font-black tracking-wide mb-8 flex items-center gap-3">
-          <span className="bg-blue-700 p-2 rounded-xl"><LayoutDashboard size={32} /></span>
-          CallLogix
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "280px 1fr",
+        height: "100vh",
+        background: "#f9fafb",
+      }}
+    >
+      <aside
+        style={{
+          background: "#153b85",
+          color: "white",
+          padding: "20px 16px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 12,
+        }}
+      >
+        <div style={{ fontWeight: 800, fontSize: 22, display: "flex", gap: 10 }}>
+          <span>🧩</span>
+          <span>CallLogix</span>
         </div>
-        <nav className="flex-1">
-          {TABS.map(({ name, icon: Icon }) => (
-            <button
-              key={name}
-              onClick={() => setTab(name)}
-              className={`w-full flex items-center gap-3 p-3 rounded-lg my-1 transition ${
-                activeTab === name
-                  ? "bg-blue-700 text-white font-bold shadow"
-                  : "hover:bg-blue-800/70 text-blue-100"
-              }`}
-            >
-              <Icon size={22} />
-              {name}
-            </button>
-          ))}
+
+        <nav style={{ display: "grid", gap: 8, marginTop: 16 }}>
+          <NavLink to="/app" end style={linkStyle}>
+            Dashboard
+          </NavLink>
+          <NavLink to="/app/transcriptie" style={linkStyle}>
+            Nieuwe opname
+          </NavLink>
+          <NavLink to="/app/geschiedenis" style={linkStyle}>
+            Opname geschiedenis
+          </NavLink>
+          {/* voeg hier evt. meer items toe */}
         </nav>
-        <div className="mt-auto pt-10 text-xs text-blue-200/60">
+
+        <div style={{ marginTop: "auto", opacity: 0.7, fontSize: 12 }}>
           © {new Date().getFullYear()} CallLogix
         </div>
       </aside>
-      <main className="flex-1 p-10 bg-calllogix-dark min-h-screen pt-24">
-        {children}
+
+      <main
+        style={{
+          display: "grid",
+          gridTemplateRows: "auto 1fr",
+          minWidth: 0,
+          background: "white",
+        }}
+      >
+        {/* TopBar hoort in de rechter kolom */}
+        <TopBar />
+        <div style={{ padding: 24, overflow: "auto", minWidth: 0 }}>
+          <Outlet />
+        </div>
       </main>
     </div>
   );
+}
+
+function linkStyle({ isActive }: { isActive: boolean }) {
+  return {
+    display: "block",
+    padding: "10px 12px",
+    borderRadius: 8,
+    color: "white",
+    textDecoration: "none",
+    background: isActive ? "rgba(255,255,255,0.12)" : "transparent",
+    fontWeight: isActive ? 700 : 500,
+  } as React.CSSProperties;
 }
