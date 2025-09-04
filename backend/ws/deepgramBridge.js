@@ -1,29 +1,30 @@
-// Production-grade WebSocket bridge: client <-> Deepgram
-// Handshake: wss://<host>/ws/mic?conversation_id=...&token=...&codec=linear16|opus&sample_rate=16000
+// Deepgram mic bridge: client PCM/Opus -> Deepgram WS
 const { WebSocketServer, WebSocket } = require('ws');
 const url = require('url');
 
 function setupMicWs(server) {
   const wss = new WebSocketServer({ noServer: true });
 
-  // Upgrade handshakes vanuit Node HTTP server
   server.on('upgrade', (req, socket, head) => {
+    let pathname;
     try {
-      const { pathname } = new URL(req.url, `http://${req.headers.host}`);
-      if (pathname !== '/ws/mic') {
-        socket.destroy();
-        return;
-      }
-      wss.handleUpgrade(req, socket, head, (ws) => {
-        wss.emit('connection', ws, req);
-      });
+      pathname = new URL(req.url, `http://${req.headers.host}`).pathname;
     } catch {
       socket.destroy();
+      return;
     }
+    if (pathname !== '/ws/mic') {
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('connection', ws, req);
+    });
   });
 
   wss.on('connection', (clientWs, req) => {
     const { query } = url.parse(req.url, true);
+
     const {
       token,
       codec = 'linear16',
@@ -36,7 +37,6 @@ function setupMicWs(server) {
       language = 'nl',
     } = query || {};
 
-    // Auth: gebruik ephemeral token (query) of fallback naar env key
     const DG_TOKEN =
       (typeof token === 'string' && token) ||
       process.env.DEEPGRAM_API_KEY ||
@@ -47,7 +47,6 @@ function setupMicWs(server) {
       return;
     }
 
-    // Deepgram WS URL
     const dgUrl = new URL('wss://api.deepgram.com/v1/listen');
     dgUrl.searchParams.set('encoding', codec === 'opus' ? 'opus' : 'linear16');
     dgUrl.searchParams.set('sample_rate', String(sample_rate || '16000'));
@@ -58,11 +57,24 @@ function setupMicWs(server) {
     dgUrl.searchParams.set('punctuate', String(punctuate));
     dgUrl.searchParams.set('diarize', String(diarize));
 
+    // Maak Deepgram WS
     const dgWs = new WebSocket(dgUrl.toString(), {
       headers: { Authorization: `Token ${DG_TOKEN}` },
     });
 
-    // PING keepalive om idle disconnects te voorkomen
+    // Buffer audioframes tot DG open is (voorkomt verlies van vroege frames)
+    const queue = [];
+    let openDG = false;
+
+    const flushQueue = () => {
+      if (!openDG) return;
+      while (queue.length) {
+        const chunk = queue.shift();
+        try { dgWs.send(chunk, { binary: true }); } catch {}
+      }
+    };
+
+    // Keepalive
     let pingIv = null;
     const startPinger = () => {
       if (pingIv) return;
@@ -73,20 +85,26 @@ function setupMicWs(server) {
     };
     const stopPinger = () => { if (pingIv) clearInterval(pingIv); pingIv = null; };
 
-    // Als Deepgram open is, begin doorzetten van audio
-    dgWs.on('open', () => {
-      startPinger();
-      clientWs.on('message', (data) => {
-        if (dgWs.readyState === WebSocket.OPEN) {
-          dgWs.send(data, { binary: true });
-        }
-      });
+    // Client->DG: voeg handler meteen toe en buffer indien nodig
+    clientWs.on('message', (data) => {
+      if (openDG && dgWs.readyState === WebSocket.OPEN) {
+        try { dgWs.send(data, { binary: true }); } catch {}
+      } else {
+        queue.push(data);
+      }
     });
 
-    // Antwoorden van Deepgram -> 1:1 naar client (frontend verwacht raw DG JSON)
+    // DG open: flush buffer
+    dgWs.on('open', () => {
+      openDG = true;
+      startPinger();
+      flushQueue();
+    });
+
+    // DG -> Client (JSON text)
     dgWs.on('message', (data) => {
       if (clientWs.readyState === WebSocket.OPEN) {
-        clientWs.send(data);
+        try { clientWs.send(data); } catch {}
       }
     });
 
@@ -96,7 +114,6 @@ function setupMicWs(server) {
       try { dgWs.close(); } catch {}
       try { clientWs.close(); } catch {}
     };
-
     clientWs.on('close', cleanup);
     clientWs.on('error', cleanup);
     dgWs.on('close', cleanup);
