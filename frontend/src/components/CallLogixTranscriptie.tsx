@@ -2,33 +2,52 @@ import { useEffect, useRef, useState } from "react";
 import api from "../api";
 import { startMicPcm16k, type MicStopper } from "../lib/capturePcm16k";
 
-type DGMessage = {
-  type?: string;
-  channel?: {
-    alternatives?: Array<{ transcript?: string }>;
-    is_final?: boolean;
-  };
-  is_final?: boolean;
-  alternatives?: Array<{ transcript?: string }>;
+/** ===== Types die meerdere Deepgram-vormen afdekken ===== */
+type DGAlt = {
+  transcript?: string;
+  confidence?: number;
+  words?: Array<{
+    word?: string;
+    start?: number;
+    end?: number;
+    speaker?: number; // aanwezig bij diarization
+  }>;
+};
+
+type DGRealtime =
+  | {
+      type?: string; // "Results" | "UtteranceEnd" | ...
+      channel?: { alternatives?: DGAlt[]; is_final?: boolean };
+      alternatives?: DGAlt[];
+      is_final?: boolean;
+    }
+  | Record<string, unknown>; // catch-all
+
+type Segment = {
+  id: string;
+  speaker: "Agent" | "Klant";
+  text: string;
+  final: boolean;
 };
 
 export default function CallLogixTranscriptie() {
   const [recording, setRecording] = useState(false);
-  const [transcript, setTranscript] = useState<string>("");
+  const [segments, setSegments] = useState<Segment[]>([]);
   const [interim, setInterim] = useState<string>("");
 
   const wsRef = useRef<WebSocket | null>(null);
   const micStopRef = useRef<MicStopper | null>(null);
   const convoIdRef = useRef<string>("");
 
-  // ✅ cleanup mag geen Promise teruggeven → Promise negeren met `void`
+  // ======== Cleanup (mag geen Promise retourneren) ========
   useEffect(() => {
     return () => {
-      void stopRecording(); // opruimen bij unmount
+      void stopRecording();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ======== Helpers ========
   function buildWsUrl(token: string) {
     const base = (import.meta.env.VITE_API_BASE_URL as string) || "";
     const wssBase = base.replace(/^http/i, "ws");
@@ -41,32 +60,75 @@ export default function CallLogixTranscriptie() {
     url.searchParams.set("smart_format", "true");
     url.searchParams.set("interim_results", "true");
     url.searchParams.set("punctuate", "true");
+    url.searchParams.set("diarize", "true");          // << belangrijk voor speaker hints
+    url.searchParams.set("utterance_end_ms", "800");  // responsiever “final”
     return url.toString();
   }
 
-  function handleDGMessage(ev: MessageEvent) {
-    try {
-      const msg: DGMessage = typeof ev.data === "string" ? JSON.parse(ev.data) : null;
-      if (!msg) return;
-
-      const alt = msg.channel?.alternatives?.[0] ?? msg.alternatives?.[0];
-      const text = (alt?.transcript || "").trim();
-      const isFinal = (msg.channel?.is_final ?? msg.is_final) === true;
-
-      if (isFinal) {
-        if (text) setTranscript((t) => (t ? t + "\n" + text : text));
-        setInterim("");
-      } else {
-        setInterim(text);
+  /** Robuust: accepteert string, Blob, ArrayBuffer */
+  function onWsMessage(ev: MessageEvent) {
+    const handleString = (s: string) => {
+      try {
+        const msg: DGRealtime = JSON.parse(s);
+        handleDG(msg);
+      } catch {
+        // ignore non-json
       }
-    } catch {
-      // non-JSON berichten negeren
+    };
+    if (typeof ev.data === "string") {
+      handleString(ev.data);
+    } else if (ev.data instanceof ArrayBuffer) {
+      const txt = new TextDecoder().decode(new Uint8Array(ev.data));
+      handleString(txt);
+    } else if (ev.data && typeof ev.data.text === "function") {
+      // Blob
+      (ev.data as Blob).text().then(handleString).catch(() => {});
     }
   }
 
+  /** Extract transcript + speaker en update UI */
+  function handleDG(msg: DGRealtime) {
+    // Result record vinden (Deepgram varianten)
+    const isFinal = Boolean(
+      (msg as any)?.channel?.is_final ?? (msg as any)?.is_final ?? false
+    );
+
+    const alt: DGAlt | undefined =
+      (msg as any)?.channel?.alternatives?.[0] ??
+      (msg as any)?.alternatives?.[0];
+
+    const text = (alt?.transcript || "").trim();
+    if (!text && !isFinal) {
+      // niks om te tonen (kan bij keepalives)
+      return;
+    }
+
+    // Speaker bepaling:
+    // - Als diarization actief is, pakt DG een speaker-id op word-niveau.
+    // - We nemen de eerste word.speaker als hint. 0/undefined => "Klant" default.
+    let speaker: "Agent" | "Klant" = "Klant";
+    const sp = alt?.words?.find((w) => typeof w.speaker === "number")?.speaker;
+    if (sp === 1) speaker = "Agent";
+    if (sp === 2) speaker = "Klant"; // tweak desgewenst
+
+    if (isFinal) {
+      setInterim("");
+      if (text) {
+        setSegments((list) => [
+          ...list,
+          { id: crypto.randomUUID(), speaker, text, final: true },
+        ]);
+      }
+    } else {
+      // interim
+      setInterim(text);
+    }
+  }
+
+  // ======== Start / Stop ========
   async function startRecording() {
     if (recording) return;
-    setTranscript("");
+    setSegments([]);
     setInterim("");
     convoIdRef.current = crypto.randomUUID();
 
@@ -75,7 +137,7 @@ export default function CallLogixTranscriptie() {
 
     const ws = new WebSocket(wsUrl);
     ws.binaryType = "arraybuffer";
-    ws.onmessage = handleDGMessage;
+    ws.onmessage = onWsMessage;
     ws.onerror = () => {};
     ws.onclose = () => {};
     ws.onopen = async () => {
@@ -102,52 +164,143 @@ export default function CallLogixTranscriptie() {
     wsRef.current = null;
   }
 
+  // ======== UI ========
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 24 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 24 }}>
+      {/* Content */}
       <section>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-          <button
-            onClick={recording ? () => void stopRecording() : () => void startRecording()}
-            style={{
-              padding: "10px 14px",
-              borderRadius: 8,
-              border: "1px solid #e5e7eb",
-              background: recording ? "#ef4444" : "#111827",
-              color: "white",
-              fontWeight: 700,
-              cursor: "pointer",
-            }}
-          >
-            {recording ? "Stop opname" : "Start opname"}
-          </button>
-          <span style={{ opacity: 0.6 }}>
-            {recording ? "Live..." : "Niet actief"}
-          </span>
-        </div>
-
-        <h2 style={{ fontSize: 28, margin: "12px 0" }}>Live Transcriptie</h2>
-
+        {/* Controls */}
         <div
           style={{
-            whiteSpace: "pre-wrap",
-            border: "1px solid #e5e7eb",
-            borderRadius: 10,
-            padding: 16,
-            minHeight: 220,
-            fontSize: 16,
-            lineHeight: 1.5,
+            position: "sticky",
+            top: 0,
             background: "#fff",
+            padding: "8px 0 16px",
+            zIndex: 5,
           }}
         >
-          {transcript || <span style={{ opacity: 0.5 }}>Nog geen tekst...</span>}
-          {interim ? <span style={{ opacity: 0.5 }}> {interim}</span> : null}
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button
+              onClick={recording ? () => void stopRecording() : () => void startRecording()}
+              style={{
+                padding: "10px 14px",
+                borderRadius: 10,
+                border: "1px solid #e5e7eb",
+                background: recording ? "#ef4444" : "#111827",
+                color: "white",
+                fontWeight: 700,
+                cursor: "pointer",
+                minWidth: 140,
+              }}
+            >
+              {recording ? "Stop opname" : "Start opname"}
+            </button>
+            <span
+              style={{
+                padding: "6px 10px",
+                borderRadius: 999,
+                background: recording ? "rgba(239,68,68,.1)" : "rgba(17,24,39,.06)",
+                color: recording ? "#ef4444" : "#111827",
+                fontWeight: 600,
+              }}
+            >
+              {recording ? "Live…" : "Niet actief"}
+            </span>
+          </div>
+        </div>
+
+        {/* Transcript */}
+        <h2 style={{ fontSize: 28, margin: "6px 0 12px" }}>Live Transcriptie</h2>
+
+        <div style={{ display: "grid", gap: 10 }}>
+          {segments.length === 0 && !interim ? (
+            <div
+              style={{
+                border: "1px solid #e5e7eb",
+                borderRadius: 12,
+                padding: 16,
+                color: "#9ca3af",
+                background: "#fff",
+              }}
+            >
+              Nog geen tekst…
+            </div>
+          ) : null}
+
+          {segments.map((s) => (
+            <Bubble key={s.id} speaker={s.speaker} text={s.text} />
+          ))}
+
+          {interim ? (
+            <Bubble speaker={"Klant"} text={interim} dimmed />
+          ) : null}
         </div>
       </section>
 
+      {/* Suggesties */}
       <aside>
         <h3 style={{ fontSize: 18, margin: "4px 0 12px" }}>AI Vraagsuggesties</h3>
         <div style={{ opacity: 0.6 }}>Nog geen suggesties…</div>
       </aside>
     </div>
+  );
+}
+
+/** Speech bubble per speaker */
+function Bubble({
+  speaker,
+  text,
+  dimmed,
+}: {
+  speaker: "Agent" | "Klant";
+  text: string;
+  dimmed?: boolean;
+}) {
+  const isAgent = speaker === "Agent";
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 10,
+        alignItems: "flex-start",
+        justifyContent: isAgent ? "flex-end" : "flex-start",
+      }}
+    >
+      {!isAgent && <Badge label="Klant" />}
+      <div
+        style={{
+          maxWidth: "70ch",
+          whiteSpace: "pre-wrap",
+          border: "1px solid #e5e7eb",
+          background: isAgent ? "#111827" : "#fff",
+          color: isAgent ? "#fff" : "#111827",
+          opacity: dimmed ? 0.6 : 1,
+          padding: "10px 12px",
+          borderRadius: 12,
+        }}
+      >
+        {text}
+      </div>
+      {isAgent && <Badge label="Agent" dark />}
+    </div>
+  );
+}
+
+function Badge({ label, dark }: { label: string; dark?: boolean }) {
+  return (
+    <span
+      style={{
+        alignSelf: "center",
+        fontSize: 12,
+        fontWeight: 700,
+        color: dark ? "#111827" : "#111827",
+        background: "rgba(17,24,39,.06)",
+        border: "1px solid #e5e7eb",
+        padding: "4px 8px",
+        borderRadius: 999,
+      }}
+    >
+      {label}
+    </span>
   );
 }
