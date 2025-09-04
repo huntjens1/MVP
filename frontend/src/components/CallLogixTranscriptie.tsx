@@ -57,13 +57,15 @@ export default function CallLogixTranscriptie() {
     url.searchParams.set("codec", "linear16");
     url.searchParams.set("sample_rate", "16000");
     url.searchParams.set("language", "nl");
+    url.searchParams.set("model", "nova-2");        // << expliciet
     url.searchParams.set("smart_format", "true");
     url.searchParams.set("interim_results", "true");
     url.searchParams.set("punctuate", "true");
-    url.searchParams.set("diarize", "true");          // << belangrijk voor speaker hints
-    url.searchParams.set("utterance_end_ms", "800");  // responsiever “final”
+    url.searchParams.set("diarize", "true");
+    url.searchParams.set("utterance_end_ms", "800");
     return url.toString();
-  }
+}
+
 
   /** Robuust: accepteert string, Blob, ArrayBuffer */
   function onWsMessage(ev: MessageEvent) {
