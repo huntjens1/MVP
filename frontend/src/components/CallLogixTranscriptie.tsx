@@ -55,16 +55,15 @@ export default function CallLogixTranscriptie() {
     url.searchParams.set("conversation_id", convoIdRef.current);
     url.searchParams.set("token", token);
 
-    // client → backend (bridge) metadata:
+    // Alleen realtime-compatibele params meesturen
     url.searchParams.set("codec", "linear16");
     url.searchParams.set("sample_rate", "16000");
     url.searchParams.set("language", "nl");
-    url.searchParams.set("model", "nova-2");           // << belangrijk
+    url.searchParams.set("model", "nova-2");
     url.searchParams.set("smart_format", "true");
     url.searchParams.set("interim_results", "true");
-    url.searchParams.set("punctuate", "true");
     url.searchParams.set("diarize", "true");
-    url.searchParams.set("utterance_end_ms", "800");
+
     return url.toString();
 }
 

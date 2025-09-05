@@ -4,8 +4,8 @@ const url = require("url");
 
 const DG_WS = "wss://api.deepgram.com/v1/listen";
 
-// Alleen geldige, door DG realtime geaccepteerde keys whitelisten.
-// Let op: 'punctuate' NIET meesturen op nova-2 (kan 400 geven).
+// Alleen realtime-compatibele keys toestaan.
+// NIET opnemen: utterance_end_ms (geeft 400 bij realtime)
 const PASS_KEYS = [
   "model",
   "language",
@@ -14,15 +14,13 @@ const PASS_KEYS = [
   "smart_format",  // true
   "interim_results",
   "diarize",
-  "utterance_end_ms",
-  // voeg hier extra veilige keys toe wanneer nodig:
-  // "keywords", "search", "filler_words", "profanity_filter"
+  // voeg evt. veilige opties toe: "keywords","search","filler_words","profanity_filter"
 ];
 
 function buildDGUrl(q) {
   const u = new URL(DG_WS);
 
-  // mapping: als 'codec' binnenkomt -> naar 'encoding'
+  // mapping: 'codec' -> 'encoding'
   if (q.codec && !q.encoding) u.searchParams.set("encoding", String(q.codec));
   if (q.sample_rate) u.searchParams.set("sample_rate", String(q.sample_rate));
 
@@ -40,7 +38,6 @@ function buildDGUrl(q) {
   if (!u.searchParams.get("sample_rate")) u.searchParams.set("sample_rate", "16000");
   if (!u.searchParams.get("smart_format")) u.searchParams.set("smart_format", "true");
   if (!u.searchParams.get("interim_results")) u.searchParams.set("interim_results", "true");
-  if (!u.searchParams.get("utterance_end_ms")) u.searchParams.set("utterance_end_ms", "800");
 
   return u.toString();
 }
@@ -48,7 +45,6 @@ function buildDGUrl(q) {
 function setupMicWs(server, app, logger = console) {
   const wss = new WebSocket.Server({ noServer: true });
 
-  // Upgrade alleen op /ws/mic
   server.on("upgrade", (req, socket, head) => {
     const { pathname } = url.parse(req.url);
     if (pathname !== "/ws/mic") return;
@@ -72,16 +68,14 @@ function setupMicWs(server, app, logger = console) {
     const dgUrl = buildDGUrl(q);
     logger.info(`[DG] open rid=${rid} tenant=${tenantId} url=${dgUrl}`);
 
-    // Maak WS naar Deepgram met Authorization header (ephemeral token)
     const dgWs = new WebSocket(dgUrl, {
       headers: {
         Authorization: `Token ${token}`,
-        // Eventueel kan een user-agent helpen bij support/debug:
         "User-Agent": "CallLogix/1.0",
       },
     });
 
-    // >>> Kritische diagnose: log de echte 4xx/5xx respons en body
+    // Log het 4xx/5xx antwoord inclusief body
     dgWs.on("unexpected-response", (request, response) => {
       let body = "";
       response.on("data", (chunk) => (body += chunk.toString()));
@@ -92,14 +86,12 @@ function setupMicWs(server, app, logger = console) {
           )} body=${body}`
         );
         try {
-          clientWs.send(
-            JSON.stringify({
-              type: "error",
-              source: "deepgram_handshake",
-              status: response.statusCode,
-              body,
-            })
-          );
+          clientWs.send(JSON.stringify({
+            type: "error",
+            source: "deepgram_handshake",
+            status: response.statusCode,
+            body,
+          }));
         } catch {}
         try { clientWs.close(1011, "dg_unexpected_response"); } catch {}
       });
@@ -119,15 +111,11 @@ function setupMicWs(server, app, logger = console) {
     dgWs.on("open", () => {
       dgOpen = true;
       logger.info(`[DG] connected rid=${rid}`);
-      // flush gebufferde audio
-      for (const part of queue) {
-        try { dgWs.send(part); } catch {}
-      }
+      for (const part of queue) { try { dgWs.send(part); } catch {} }
       queue.length = 0;
     });
 
     dgWs.on("message", (data) => {
-      // DG → client (JSON string of Buffer) 1:1 doorzetten
       try { clientWs.send(data); } catch {}
     });
 
@@ -143,9 +131,7 @@ function setupMicWs(server, app, logger = console) {
       safeClose(code, reason);
     });
 
-    // Client audio → DG
     clientWs.on("message", (data) => {
-      // Verwacht Int16LE frames (~640 bytes = 320 samples @16kHz)
       if (!dgOpen) queue.push(data);
       else { try { dgWs.send(data); } catch {} }
     });
@@ -160,7 +146,6 @@ function setupMicWs(server, app, logger = console) {
       safeClose(code, reason);
     });
 
-    // keepalive (sommige proxies waarderen dit)
     const ka = setInterval(() => { try { dgWs.ping(); } catch {} }, 15000);
     clientWs.on("close", () => clearInterval(ka));
     dgWs.on("close", () => clearInterval(ka));
