@@ -1,11 +1,9 @@
-// backend/ws/deepgramBridge.js
 const WebSocket = require("ws");
 const url = require("url");
 
 const DG_WS = "wss://api.deepgram.com/v1/listen";
 
-// Alleen realtime-compatibele keys toestaan.
-// NIET opnemen: utterance_end_ms (geeft 400 bij realtime)
+// Alleen realtime-compatibele query params toestaan
 const PASS_KEYS = [
   "model",
   "language",
@@ -14,7 +12,7 @@ const PASS_KEYS = [
   "smart_format",  // true
   "interim_results",
   "diarize",
-  // voeg evt. veilige opties toe: "keywords","search","filler_words","profanity_filter"
+  // evt. veilig toevoegen: "keywords","search","filler_words","profanity_filter"
 ];
 
 function buildDGUrl(q) {
@@ -31,7 +29,7 @@ function buildDGUrl(q) {
     }
   }
 
-  // Defaults afdwingen
+  // Defaults afdwingen (nova-2, NL, 16k linear16)
   if (!u.searchParams.get("model")) u.searchParams.set("model", "nova-2");
   if (!u.searchParams.get("language")) u.searchParams.set("language", "nl");
   if (!u.searchParams.get("encoding")) u.searchParams.set("encoding", "linear16");
@@ -59,23 +57,28 @@ function setupMicWs(server, app, logger = console) {
     const tenantId = req.headers["x-tenant-id"] || "unknown";
     const rid = q.conversation_id || "rid-" + Math.random().toString(36).slice(2);
 
-    const token = q.token;
-    if (!token || typeof token !== "string") {
-      try { clientWs.close(1008, "missing_token"); } catch {}
+    // 1) Auth: prefer server-side permanente key; anders fallback naar query token
+    const serverKey = process.env.DEEPGRAM_API_KEY && String(process.env.DEEPGRAM_API_KEY).trim();
+    const queryToken = q.token && String(q.token).trim();
+    const authToken = serverKey || queryToken;
+
+    if (!authToken) {
+      logger.error(`[DG] rid=${rid} no_auth_token (set DEEPGRAM_API_KEY or pass token=)`);
+      try { clientWs.close(1008, "missing_auth"); } catch {}
       return;
     }
 
     const dgUrl = buildDGUrl(q);
-    logger.info(`[DG] open rid=${rid} tenant=${tenantId} url=${dgUrl}`);
+    logger.info(`[DG] open rid=${rid} tenant=${tenantId} auth=${serverKey ? "SERVER_KEY" : "EPHEMERAL"} url=${dgUrl}`);
 
     const dgWs = new WebSocket(dgUrl, {
       headers: {
-        Authorization: `Token ${token}`,
+        Authorization: `Token ${authToken}`,
         "User-Agent": "CallLogix/1.0",
       },
     });
 
-    // Log het 4xx/5xx antwoord inclusief body
+    // Log 4xx/5xx reden + body
     dgWs.on("unexpected-response", (request, response) => {
       let body = "";
       response.on("data", (chunk) => (body += chunk.toString()));
