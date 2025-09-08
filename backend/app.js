@@ -1,3 +1,4 @@
+// backend/app.js
 const express = require('express');
 const helmet = require('helmet');
 const morgan = require('morgan');
@@ -15,51 +16,50 @@ const feedbackRouter  = require('./routes/feedback');
 
 const app = express();
 app.set('trust proxy', 1);
-app.disable('etag'); // voorkom 304-responses op /api/me
+app.disable('etag'); // voorkom 304 op /api/me (spaarder voor edge-caches)
 
-// === CORS EERST + preflight responder ===
+// ===== CORS & preflight =====
 app.use(strictCors);
 app.options('*', strictCors);
 
-// === BODY PARSER ===
+// ===== Body parsing =====
 app.use(express.json({ limit: '1mb' }));
 
-// === TENANT RESOLVER (na CORS, vóór security/logging/routes) ===
+// ===== Tenant scoping (na CORS) =====
 app.use(tenantResolver);
 
-// === SECURITY ===
+// ===== Security =====
 app.use(helmet({ crossOriginResourcePolicy: false }));
 
-// === TELEMETRY ===
+// ===== Telemetry =====
 app.use(telemetry);
 
-// === LOGGING ===
+// ===== Logging =====
 morgan.token('tenant', (_req, res) => (res?.locals?.tenant_id || 'unknown'));
-morgan.token('rid', (_req, res) => (res?.locals?.request_id || '-'));
+morgan.token('rid',    (_req, res) => (res?.locals?.request_id || '-'));
 app.use(morgan(':method :url :status :res[content-length] - :response-time ms tenant=:tenant rid=:rid'));
 
-// === RATE LIMITS ===
-const generalLimiter = rateLimit({ windowMs: 60 * 1000, limit: 120, standardHeaders: 'draft-7', legacyHeaders: false });
+// ===== Rate limits =====
+const generalLimiter = rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: 'draft-7', legacyHeaders: false });
+const tokenLimiter   = rateLimit({ windowMs: 60_000, limit: 20,  standardHeaders: 'draft-7', legacyHeaders: false });
+
 app.use('/api/', generalLimiter);
-const tokenLimiter = rateLimit({ windowMs: 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false });
 app.use('/api/ws-token', tokenLimiter);
 
-// === HEALTH ===
+// ===== Health =====
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
-/* ====================== ROUTES ====================== */
-app.use('/api', authRouter);             // /api/login, /api/logout, /api/me
-app.use('/api/auth', authRouter);        // alias
-
-app.use('/api/ws-token', wsTokenRouter);
+// ===== Routes =====
+app.use('/api', authRouter);              // /api/login, /api/logout, /api/me
+app.use('/api/ws-token', wsTokenRouter);  // WebSocket toegangstoken
 app.use('/api/summarize', summarizeRouter);
-app.use('/api/suggest', suggestRouter);
-app.use('/api/feedback', feedbackRouter);
+app.use('/api/suggest',   suggestRouter); // POST + SSE stream
+app.use('/api/feedback',  feedbackRouter);
 
-// Compat-aliassen
+// Compat-aliassen (oude frontends)
 app.use('/ws-token', wsTokenRouter);
 app.use('/api/ai/summarize', summarizeRouter);
-app.use('/api/ai/feedback', feedbackRouter);
+app.use('/api/ai/feedback',  feedbackRouter);
 app.use('/api/suggestQuestion', suggestRouter);
 
 // 404

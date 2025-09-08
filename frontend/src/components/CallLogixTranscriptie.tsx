@@ -1,3 +1,4 @@
+// frontend/src/components/CallLogixTranscriptie.tsx
 import { useEffect, useRef, useState } from "react";
 import api from "../api";
 import { startMicPcm16k, type MicStopper } from "../lib/capturePcm16k";
@@ -21,7 +22,7 @@ type DGRealtime =
       alternatives?: DGAlt[];
       is_final?: boolean;
     }
-  | Record<string, unknown>; // catch-all
+  | Record<string, unknown>;
 
 type Segment = {
   id: string;
@@ -35,19 +36,20 @@ export default function CallLogixTranscriptie() {
   const [segments, setSegments] = useState<Segment[]>([]);
   const [interim, setInterim] = useState<string>("");
 
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const sseRef = useRef<EventSource | null>(null);
+
   const wsRef = useRef<WebSocket | null>(null);
   const micStopRef = useRef<MicStopper | null>(null);
   const convoIdRef = useRef<string>("");
 
-  // ======== Cleanup (mag geen Promise retourneren) ========
+  // ===== Cleanup =====
   useEffect(() => {
-    return () => {
-      void stopRecording();
-    };
+    return () => { void stopRecording(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ======== Helpers ========
+  // ===== Helpers =====
   function buildWsUrl(token: string) {
     const base = (import.meta.env.VITE_API_BASE_URL as string) || "";
     const wssBase = base.replace(/^http/i, "ws");
@@ -55,7 +57,7 @@ export default function CallLogixTranscriptie() {
     url.searchParams.set("conversation_id", convoIdRef.current);
     url.searchParams.set("token", token);
 
-    // Alleen realtime-compatibele params meesturen
+    // realtime-compatibele params
     url.searchParams.set("codec", "linear16");
     url.searchParams.set("sample_rate", "16000");
     url.searchParams.set("language", "nl");
@@ -63,10 +65,13 @@ export default function CallLogixTranscriptie() {
     url.searchParams.set("smart_format", "true");
     url.searchParams.set("interim_results", "true");
     url.searchParams.set("diarize", "true");
-
     return url.toString();
-}
+  }
 
+  function lastNText(n = 3) {
+    const pick = segments.slice(-n).map(s => `${s.speaker}: ${s.text}`);
+    return pick.join("\n");
+  }
 
   /** Robuust: accepteert string, Blob, ArrayBuffer */
   function onWsMessage(ev: MessageEvent) {
@@ -74,24 +79,20 @@ export default function CallLogixTranscriptie() {
       try {
         const msg: DGRealtime = JSON.parse(s);
         handleDG(msg);
-      } catch {
-        // ignore non-json
-      }
+      } catch { /* ignore */ }
     };
     if (typeof ev.data === "string") {
       handleString(ev.data);
     } else if (ev.data instanceof ArrayBuffer) {
       const txt = new TextDecoder().decode(new Uint8Array(ev.data));
       handleString(txt);
-    } else if (ev.data && typeof ev.data.text === "function") {
-      // Blob
+    } else if (ev.data && typeof (ev.data as Blob).text === "function") {
       (ev.data as Blob).text().then(handleString).catch(() => {});
     }
   }
 
-  /** Extract transcript + speaker en update UI */
-  function handleDG(msg: DGRealtime) {
-    // Result record vinden (Deepgram varianten)
+  /** Extract transcript + speaker en update UI (+ trigger suggesties) */
+  async function handleDG(msg: DGRealtime) {
     const isFinal = Boolean(
       (msg as any)?.channel?.is_final ?? (msg as any)?.is_final ?? false
     );
@@ -101,39 +102,77 @@ export default function CallLogixTranscriptie() {
       (msg as any)?.alternatives?.[0];
 
     const text = (alt?.transcript || "").trim();
-    if (!text && !isFinal) {
-      // niks om te tonen (kan bij keepalives)
-      return;
-    }
+    if (!text && !isFinal) return;
 
-    // Speaker bepaling:
-    // - Als diarization actief is, pakt DG een speaker-id op word-niveau.
-    // - We nemen de eerste word.speaker als hint. 0/undefined => "Klant" default.
+    // simpele speaker-herleiding op basis van diarization-woorden
     let speaker: "Agent" | "Klant" = "Klant";
     const sp = alt?.words?.find((w) => typeof w.speaker === "number")?.speaker;
     if (sp === 1) speaker = "Agent";
-    if (sp === 2) speaker = "Klant"; // tweak desgewenst
+    if (sp === 2) speaker = "Klant";
 
     if (isFinal) {
       setInterim("");
       if (text) {
-        setSegments((list) => [
-          ...list,
-          { id: crypto.randomUUID(), speaker, text, final: true },
-        ]);
+        setSegments((list) => {
+          const next = [...list, { id: crypto.randomUUID(), speaker, text, final: true }];
+          // na commit: stuur prompt naar suggesties
+          void sendSuggestions(`${lastNFrom(next, 2)}\n${speaker}: ${text}`);
+          return next;
+        });
       }
     } else {
-      // interim
       setInterim(text);
     }
   }
 
-  // ======== Start / Stop ========
+  function lastNFrom(list: Segment[], n: number) {
+    return list.slice(-n).map(s => `${s.speaker}: ${s.text}`).join("\n");
+  }
+
+  async function openSuggestionsStream() {
+    const base = import.meta.env.VITE_API_BASE_URL as string;
+    const url = `${base}/api/suggest/stream?conversation_id=${encodeURIComponent(convoIdRef.current)}`;
+    const es = new EventSource(url, { withCredentials: true });
+    es.addEventListener("suggestions", (e: MessageEvent) => {
+      try {
+        const payload = JSON.parse(e.data);
+        if (payload?.conversation_id !== convoIdRef.current) return;
+        const items: string[] = Array.isArray(payload.suggestions) ? payload.suggestions : [];
+        if (items.length) setSuggestions(items);
+      } catch {/* noop */}
+    });
+    es.onerror = () => { /* laat SSE reconnecten */ };
+    sseRef.current = es;
+  }
+
+  async function sendSuggestions(context: string) {
+    try {
+      const base = import.meta.env.VITE_API_BASE_URL as string;
+      await fetch(`${base}/api/suggest`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversation_id: convoIdRef.current,
+          text: context || lastNText(3),
+        }),
+      });
+      // antwoord komt via SSE binnen; niets doen hier
+    } catch (e) {
+      console.warn("[suggest]", (e as Error).message);
+    }
+  }
+
+  // ===== Start / Stop =====
   async function startRecording() {
     if (recording) return;
     setSegments([]);
     setInterim("");
+    setSuggestions([]);
     convoIdRef.current = crypto.randomUUID();
+
+    // SSE voor suggesties openen vóór audio start
+    await openSuggestionsStream();
 
     const t = await api.wsToken();
     const wsUrl = buildWsUrl(t.token);
@@ -142,12 +181,10 @@ export default function CallLogixTranscriptie() {
     ws.binaryType = "arraybuffer";
     ws.onmessage = onWsMessage;
     ws.onerror = () => {};
-    ws.onclose = () => {};
+    ws.onclose  = () => {};
     ws.onopen = async () => {
       try {
-        const stop = await startMicPcm16k(ws, {
-          onError: (e) => console.warn("[mic]", e.message),
-        });
+        const stop = await startMicPcm16k(ws, { onError: (e) => console.warn("[mic]", e.message) });
         micStopRef.current = stop;
         setRecording(true);
       } catch (e) {
@@ -165,9 +202,11 @@ export default function CallLogixTranscriptie() {
     micStopRef.current = null;
     try { wsRef.current?.close(); } catch {}
     wsRef.current = null;
+    try { sseRef.current?.close(); } catch {}
+    sseRef.current = null;
   }
 
-  // ======== UI ========
+  // ===== UI =====
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 24 }}>
       {/* Content */}
@@ -234,16 +273,31 @@ export default function CallLogixTranscriptie() {
             <Bubble key={s.id} speaker={s.speaker} text={s.text} />
           ))}
 
-          {interim ? (
-            <Bubble speaker={"Klant"} text={interim} dimmed />
-          ) : null}
+          {interim ? <Bubble speaker={"Klant"} text={interim} dimmed /> : null}
         </div>
       </section>
 
       {/* Suggesties */}
       <aside>
         <h3 style={{ fontSize: 18, margin: "4px 0 12px" }}>AI Vraagsuggesties</h3>
-        <div style={{ opacity: 0.6 }}>Nog geen suggesties…</div>
+        {suggestions.length === 0 ? (
+          <div style={{ opacity: 0.6 }}>Nog geen suggesties…</div>
+        ) : (
+          <ul style={{ display: "grid", gap: 8, padding: 0, listStyle: "none" }}>
+            {suggestions.map((s, i) => (
+              <li key={i}
+                  style={{
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 10,
+                    background: "#fff",
+                    padding: "10px 12px",
+                    lineHeight: 1.35,
+                  }}>
+                {s}
+              </li>
+            ))}
+          </ul>
+        )}
       </aside>
     </div>
   );
