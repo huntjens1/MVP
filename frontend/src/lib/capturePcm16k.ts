@@ -1,81 +1,55 @@
-// Start/stop microfoon capture via AudioWorklet naar 16kHz Int16 PCM
+// frontend/src/lib/capturePcm16k.ts
 export type MicStopper = () => Promise<void>;
 
-export async function startMicPcm16k(
-  ws: WebSocket,
-  opts?: { onError?: (e: Error) => void }
-): Promise<MicStopper> {
-  const onErr = (e: any) => opts?.onError?.(e instanceof Error ? e : new Error(String(e)));
-
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
-  const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({
-    sampleRate: 48000, // browser default, we resamplen naar 16000
-  });
-
-  try {
-    await audioCtx.audioWorklet.addModule(new URL('./pcm16k-worklet-processor.js', import.meta.url));
-  } catch (e) {
-    onErr(new Error('AudioWorklet niet beschikbaar: ' + String(e)));
-    // Fallback naar ScriptProcessor (laatste redmiddel)
-    return legacyScriptProcessor(ws, stream, audioCtx, onErr);
+/**
+ * Start de microfoon, downsample naar 16kHz mono PCM (16-bit),
+ * en stuur frames (Float32 -> Int16) naar de gegeven WebSocket.
+ * Retourneert een async stop-functie die netjes alles opruimt.
+ */
+export async function startMicPcm16k(ws: WebSocket): Promise<MicStopper> {
+  if (ws.readyState !== WebSocket.OPEN) {
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => resolve(), { once: true });
+      ws.addEventListener("error", () => reject(new Error("ws error")), {
+        once: true,
+      });
+    });
   }
 
-  const source = audioCtx.createMediaStreamSource(stream);
-  const node = new AudioWorkletNode(audioCtx, 'pcm16k-writer');
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const ac = new (window.AudioContext || (window as any).webkitAudioContext)({
+    sampleRate: 16000,
+  });
 
-  node.port.onmessage = (ev: MessageEvent<Int16Array>) => {
-    if (ws.readyState === ws.OPEN) {
-      const buf = ev.data;
-      ws.send(buf.buffer);
+  const source = ac.createMediaStreamSource(stream);
+  const processor = ac.createScriptProcessor(4096, 1, 1);
+
+  source.connect(processor);
+  processor.connect(ac.destination);
+
+  processor.onaudioprocess = (ev) => {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    const input = ev.inputBuffer.getChannelData(0);
+    const buf = new ArrayBuffer(input.length * 2);
+    const view = new DataView(buf);
+    for (let i = 0; i < input.length; i++) {
+      let s = Math.max(-1, Math.min(1, input[i]));
+      view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
     }
+    ws.send(buf);
   };
-
-  source.connect(node);
-  node.connect(audioCtx.destination); // stil output pad, nodig om graph actief te houden
 
   const stop: MicStopper = async () => {
-    try { source.disconnect(); } catch {}
-    try { node.disconnect(); } catch {}
-    try { node.port.close(); } catch {}
-    try { stream.getTracks().forEach(t => t.stop()); } catch {}
-    try { await audioCtx.close(); } catch {}
-  };
-  return stop;
-}
-
-function legacyScriptProcessor(
-  ws: WebSocket,
-  stream: MediaStream,
-  audioCtx: AudioContext,
-  onErr: (e: any) => void
-): MicStopper {
-  const source = audioCtx.createMediaStreamSource(stream);
-  const sp = audioCtx.createScriptProcessor(4096, 1, 1);
-
-  sp.onaudioprocess = (ev: AudioProcessingEvent) => {
     try {
-      const input = ev.inputBuffer.getChannelData(0);
-      // zeer eenvoudige downsample 48k -> 16k (decimate by 3)
-      const outLen = Math.floor(input.length / 3);
-      const out = new Int16Array(outLen);
-      for (let i = 0, j = 0; i < outLen; i++, j += 3) {
-        const s = Math.max(-1, Math.min(1, input[j]));
-        out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-      }
-      if (ws.readyState === ws.OPEN) ws.send(out.buffer);
-    } catch (e) {
-      onErr(e);
+      processor.onaudioprocess = null;
+      processor.disconnect();
+      source.disconnect();
+      stream.getTracks().forEach((t) => t.stop());
+      if (ac.state !== "closed") await ac.close();
+    } catch {
+      /* ignore */
     }
   };
 
-  source.connect(sp);
-  sp.connect(audioCtx.destination);
-
-  const stop: MicStopper = async () => {
-    try { source.disconnect(); } catch {}
-    try { sp.disconnect(); } catch {}
-    try { stream.getTracks().forEach(t => t.stop()); } catch {}
-    try { await audioCtx.close(); } catch {}
-  };
   return stop;
 }

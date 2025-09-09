@@ -1,3 +1,4 @@
+// frontend/src/components/RightPanel.tsx
 import React, { useState } from "react";
 import type { TicketSkeleton } from "../api/index";
 
@@ -82,15 +83,23 @@ export default function RightPanel({
             <Empty text="Nog geen skeleton…" />
           ) : (
             <div className="rp-card">
-              <KV k="Titel" v={ticket.title} />
-              <KV k="Prioriteit" v={`${ticket.priority} (TTR ~${ticket.ttr_minutes}m)`} />
-              <KV k="Impact/Urgentie" v={`${ticket.impact} / ${ticket.urgency}`} />
-              <KV k="Categorie" v={ticket.category} />
-              <KV k="CI" v={ticket.ci || "n.b."} />
-              <KV k="Tags" v={(ticket.tags || []).join(", ")} />
+              <KV k="Titel" v={ticket.title || "Supportverzoek"} />
+              <KV
+                k="Prioriteit"
+                v={`${ticket.priority} (TTR ~${ticket.ttr_minutes ?? 0}m)`}
+              />
+              <KV
+                k="Impact/Urgentie"
+                v={`${ticket.impact ?? "Low"} / ${ticket.urgency ?? "Low"}`}
+              />
+              <KV k="Categorie" v={ticket.category ?? "Algemeen"} />
+              <KV k="CI" v={ticket.ci ?? "n.b."} />
+              <KV k="Tags" v={(ticket.tags ?? []).join(", ") || "–"} />
               <div style={{ marginTop: 8 }}>
                 <div style={{ fontWeight: 600, marginBottom: 6 }}>Beschrijving</div>
-                <div style={{ whiteSpace: "pre-wrap" }}>{ticket.description}</div>
+                <div style={{ whiteSpace: "pre-wrap" }}>
+                  {ticket.description || "—"}
+                </div>
               </div>
             </div>
           )}

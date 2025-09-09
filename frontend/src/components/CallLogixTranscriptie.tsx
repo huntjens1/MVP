@@ -1,6 +1,6 @@
+// frontend/src/components/CallLogixTranscriptie.tsx
 import { useEffect, useRef, useState } from "react";
-import api from "../api/index";
-import type { TicketSkeleton } from "../api/index";
+import api, { type TicketSkeleton } from "../api/index";
 import { startMicPcm16k, type MicStopper } from "../lib/capturePcm16k";
 import { maskPII } from "../utils/pii";
 
@@ -18,18 +18,17 @@ type DGRealtime = {
 type Segment = {
   id: string;
   speaker: "Agent" | "Klant";
-  text: string;   // masked
+  text: string; // masked
   final: boolean;
   flagged: boolean;
 };
+
+import RightPanel from "./RightPanel";
 
 export default function CallLogixTranscriptie() {
   const [recording, setRecording] = useState(false);
   const [segments, setSegments] = useState<Segment[]>([]);
   const [interim, setInterim] = useState<string>("");
-
-  // RHS panels (lazy import to avoid circular)
-  const RightPanel = require("./RightPanel").default as typeof import("./RightPanel").default;
 
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [nextActions, setNextActions] = useState<string[]>([]);
@@ -48,7 +47,9 @@ export default function CallLogixTranscriptie() {
   const [coach, setCoach] = useState<string>("");
 
   useEffect(() => {
-    return () => { void stopRecording(); };
+    return () => {
+      void stopRecording();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -79,7 +80,13 @@ export default function CallLogixTranscriptie() {
   }
 
   function onWsMessage(ev: MessageEvent) {
-    const handleString = (s: string) => { try { handleDG(JSON.parse(s)); } catch {} };
+    const handleString = (s: string) => {
+      try {
+        handleDG(JSON.parse(s));
+      } catch {
+        /* ignore */
+      }
+    };
     if (typeof ev.data === "string") return handleString(ev.data);
     if (ev.data instanceof ArrayBuffer) {
       const txt = new TextDecoder().decode(new Uint8Array(ev.data));
@@ -120,7 +127,9 @@ export default function CallLogixTranscriptie() {
               const r = await api.ticketSkeleton(convoIdRef.current, ctx);
               setTicket(r.skeleton);
               setSlaBadge(`${r.skeleton.priority} · TTR ~${r.skeleton.ttr_minutes}m`);
-            } catch {}
+            } catch {
+              /* ignore */
+            }
           }, 1200);
 
           return next;
@@ -133,7 +142,7 @@ export default function CallLogixTranscriptie() {
   }
 
   function lastN(list: Segment[], n: number) {
-    return list.slice(-n).map(s => `${s.speaker}: ${s.text}`).join("\n");
+    return list.slice(-n).map((s) => `${s.speaker}: ${s.text}`).join("\n");
   }
 
   async function openStreams() {
@@ -144,7 +153,9 @@ export default function CallLogixTranscriptie() {
         const data = JSON.parse(ev.data) as { conversation_id: string; suggestions: string[] };
         if (data.conversation_id !== convoIdRef.current) return;
         setSuggestions(data.suggestions || []);
-      } catch {}
+      } catch {
+        /* ignore */
+      }
     });
     esSug.onerror = () => {};
 
@@ -161,15 +172,23 @@ export default function CallLogixTranscriptie() {
         if (data.conversation_id !== convoIdRef.current) return;
         setNextActions(data.next_best_actions || []);
         setRunbook(data.runbook_steps || []);
-      } catch {}
+      } catch {
+        /* ignore */
+      }
     });
     esAss.onerror = () => {};
   }
 
   async function startRecording() {
     if (recording) return;
-    setSegments([]); setInterim(""); setSuggestions([]); setNextActions([]); setRunbook([]); setTicket(null);
-    setCoach(""); setSlaBadge("P4 · TTR ~48u");
+    setSegments([]);
+    setInterim("");
+    setSuggestions([]);
+    setNextActions([]);
+    setRunbook([]);
+    setTicket(null);
+    setCoach("");
+    setSlaBadge("P4 · TTR ~48u");
     convoIdRef.current = crypto.randomUUID();
 
     await openStreams();
@@ -181,12 +200,16 @@ export default function CallLogixTranscriptie() {
     ws.onmessage = onWsMessage;
     ws.onopen = async () => {
       try {
-        const stop = await startMicPcm16k(ws, { onError: (e) => console.warn("[mic]", e.message) });
+        const stop = await startMicPcm16k(ws);
         micStopRef.current = stop;
         setRecording(true);
         lastActivityRef.current = Date.now();
       } catch {
-        try { ws.close(); } catch {}
+        try {
+          ws.close();
+        } catch {
+          /* ignore */
+        }
       }
     };
     wsRef.current = ws;
@@ -194,25 +217,56 @@ export default function CallLogixTranscriptie() {
 
   async function stopRecording() {
     setRecording(false);
-    try { await micStopRef.current?.(); } catch {}
+    try {
+      await micStopRef.current?.();
+    } catch {
+      /* ignore */
+    }
     micStopRef.current = null;
-    try { wsRef.current?.close(); } catch {}
+    try {
+      wsRef.current?.close();
+    } catch {
+      /* ignore */
+    }
     wsRef.current = null;
-    try { sseSuggestRef.current?.close(); } catch {}
+    try {
+      sseSuggestRef.current?.close();
+    } catch {
+      /* ignore */
+    }
     sseSuggestRef.current = null;
-    try { sseAssistRef.current?.close(); } catch {}
+    try {
+      sseAssistRef.current?.close();
+    } catch {
+      /* ignore */
+    }
     sseAssistRef.current = null;
-    if (debounceTicket.current) { window.clearTimeout(debounceTicket.current); debounceTicket.current = null; }
+    if (debounceTicket.current) {
+      window.clearTimeout(debounceTicket.current);
+      debounceTicket.current = null;
+    }
   }
 
   // Hotkeys
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey && e.shiftKey)) return;
-      if (e.code === "KeyS") { e.preventDefault(); recording ? void stopRecording() : void startRecording(); }
-      if (e.code === "KeyD") { e.preventDefault(); navigator.clipboard.writeText((segments.map(s=>s.text).join(" ")).slice(0,4000)); }
-      if (e.code === "KeyK") { e.preventDefault(); if (suggestions[0]) navigator.clipboard.writeText(suggestions[0]); }
-      if (e.code === "KeyN") { e.preventDefault(); if (nextActions[0]) navigator.clipboard.writeText(nextActions[0]); }
+      if (e.code === "KeyS") {
+        e.preventDefault();
+        recording ? void stopRecording() : void startRecording();
+      }
+      if (e.code === "KeyD") {
+        e.preventDefault();
+        navigator.clipboard.writeText(segments.map((s) => s.text).join(" ").slice(0, 4000));
+      }
+      if (e.code === "KeyK") {
+        e.preventDefault();
+        if (suggestions[0]) navigator.clipboard.writeText(suggestions[0]);
+      }
+      if (e.code === "KeyN") {
+        e.preventDefault();
+        if (nextActions[0]) navigator.clipboard.writeText(nextActions[0]);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -221,8 +275,8 @@ export default function CallLogixTranscriptie() {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", gap: 24 }}>
       <section>
-        <div style={{ position:"sticky", top:0, background:"#fff", padding:"8px 0 12px", zIndex:5 }}>
-          <div style={{ display:"flex", alignItems:"center", gap: 12, flexWrap:"wrap" }}>
+        <div style={{ position: "sticky", top: 0, background: "#fff", padding: "8px 0 12px", zIndex: 5 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <button
               onClick={recording ? () => void stopRecording() : () => void startRecording()}
               style={{
@@ -239,81 +293,114 @@ export default function CallLogixTranscriptie() {
               {recording ? "Stop opname" : "Start opname"}
             </button>
 
-            <span style={{
-              padding:"6px 10px", borderRadius:999,
-              background: recording ? "rgba(239,68,68,.1)" : "rgba(17,24,39,.06)",
-              color: recording ? "#ef4444" : "#111827", fontWeight:600,
-            }}>
+            <span
+              style={{
+                padding: "6px 10px",
+                borderRadius: 999,
+                background: recording ? "rgba(239,68,68,.1)" : "rgba(17,24,39,.06)",
+                color: recording ? "#ef4444" : "#111827",
+                fontWeight: 600,
+              }}
+            >
               {recording ? "Live…" : "Niet actief"}
             </span>
 
-            <span style={{
-              marginLeft:"auto",
-              padding:"6px 10px",
-              border:"1px solid #e5e7eb",
-              borderRadius:999,
-              background:"#fff",
-              fontWeight:700
-            }}>{slaBadge}</span>
+            <span
+              style={{
+                marginLeft: "auto",
+                padding: "6px 10px",
+                border: "1px solid #e5e7eb",
+                borderRadius: 999,
+                background: "#fff",
+                fontWeight: 700,
+              }}
+            >
+              {slaBadge}
+            </span>
           </div>
 
           {coach && (
-            <div style={{
-              marginTop:8, border:"1px dashed #f59e0b", background:"rgba(245,158,11,0.08)",
-              color:"#92400e", borderRadius:10, padding:"8px 10px", fontWeight:600
-            }}>{coach}</div>
+            <div
+              style={{
+                marginTop: 8,
+                border: "1px dashed #f59e0b",
+                background: "rgba(245,158,11,0.08)",
+                color: "#92400e",
+                borderRadius: 10,
+                padding: "8px 10px",
+                fontWeight: 600,
+              }}
+            >
+              {coach}
+            </div>
           )}
         </div>
 
         <h2 style={{ fontSize: 28, margin: "6px 0 12px" }}>Live Transcriptie</h2>
 
-        <div style={{ display:"grid", gap:10 }}>
-          {segments.length===0 && !interim ? (
-            <div style={{ border:"1px solid #e5e7eb", borderRadius:12, padding:16, color:"#9ca3af", background:"#fff" }}>
+        <div style={{ display: "grid", gap: 10 }}>
+          {segments.length === 0 && !interim ? (
+            <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 16, color: "#9ca3af", background: "#fff" }}>
               Nog geen tekst…
             </div>
           ) : null}
 
           {segments.map((s) => (
-            <Bubble key={s.id} speaker={s.speaker} text={s.text} dimmed={false} flagged={s.flagged}/>
+            <Bubble key={s.id} speaker={s.speaker} text={s.text} dimmed={false} flagged={s.flagged} />
           ))}
 
-          {interim ? <Bubble speaker={"Klant"} text={interim} dimmed flagged={false}/> : null}
+          {interim ? <Bubble speaker={"Klant"} text={interim} dimmed flagged={false} /> : null}
         </div>
       </section>
 
-      <RightPanel
-        nextActions={nextActions}
-        runbook={runbook}
-        suggestions={suggestions}
-        ticket={ticket}
-      />
+      <RightPanel nextActions={nextActions} runbook={runbook} suggestions={suggestions} ticket={ticket} />
     </div>
   );
 }
 
-function Bubble({ speaker, text, dimmed, flagged }:{
-  speaker:"Agent"|"Klant"; text:string; dimmed?:boolean; flagged?:boolean;
+function Bubble({
+  speaker,
+  text,
+  dimmed,
+  flagged,
+}: {
+  speaker: "Agent" | "Klant";
+  text: string;
+  dimmed?: boolean;
+  flagged?: boolean;
 }) {
   const isAgent = speaker === "Agent";
   return (
-    <div style={{ display:"flex", gap:10, alignItems:"flex-start", justifyContent: isAgent ? "flex-end" : "flex-start" }}>
+    <div style={{ display: "flex", gap: 10, alignItems: "flex-start", justifyContent: isAgent ? "flex-end" : "flex-start" }}>
       {!isAgent && <Badge label="Klant" dark={false} />}
       <div
         style={{
-          maxWidth:"72ch", whiteSpace:"pre-wrap",
-          border:"1px solid #e5e7eb",
+          maxWidth: "72ch",
+          whiteSpace: "pre-wrap",
+          border: "1px solid #e5e7eb",
           background: isAgent ? "#111827" : "#fff",
           color: isAgent ? "#fff" : "#111827",
           opacity: dimmed ? 0.6 : 1,
-          padding:"10px 12px", borderRadius:12,
-          position:"relative"
+          padding: "10px 12px",
+          borderRadius: 12,
+          position: "relative",
         }}
         title={flagged ? "Gevoelige informatie automatisch gemaskeerd (AVG)" : undefined}
       >
         {text}
         {flagged ? (
-          <span style={{ position:"absolute", top:6, right:8, fontSize:10, background:"#fee2e2", color:"#991b1b", borderRadius:6, padding:"2px 6px" }}>
+          <span
+            style={{
+              position: "absolute",
+              top: 6,
+              right: 8,
+              fontSize: 10,
+              background: "#fee2e2",
+              color: "#991b1b",
+              borderRadius: 6,
+              padding: "2px 6px",
+            }}
+          >
             PII
           </span>
         ) : null}
@@ -323,17 +410,21 @@ function Bubble({ speaker, text, dimmed, flagged }:{
   );
 }
 
-function Badge({ label, dark }:{label:string; dark?:boolean}) {
+function Badge({ label, dark }: { label: string; dark?: boolean }) {
   return (
     <span
       style={{
-        alignSelf:"center",
-        fontSize:12, fontWeight:700,
+        alignSelf: "center",
+        fontSize: 12,
+        fontWeight: 700,
         color: dark ? "#fff" : "#111827",
         background: dark ? "#111827" : "rgba(17,24,39,.06)",
         border: dark ? "1px solid #111827" : "1px solid #e5e7eb",
-        padding:"4px 8px", borderRadius:999
+        padding: "4px 8px",
+        borderRadius: 999,
       }}
-    >{label}</span>
+    >
+      {label}
+    </span>
   );
 }
