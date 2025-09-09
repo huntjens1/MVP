@@ -1,45 +1,22 @@
-// backend/routes/aiFeedback.js
+// backend/routes/aiFeedback.js (CommonJS)
 const express = require('express');
+const { requireAuth } = require('../middlewares/auth');
+// Als je al een controller/service hebt, kun je die hier require’en
+// const { handleAiFeedback } = require('../controllers/aiFeedback');
+
 const router = express.Router();
 
 /**
  * POST /api/ai-feedback
- * MVP: log feedback (kan later naar DB / analytics pipeline)
+ * MVP-implementatie: valideert input en geeft 202 terug.
+ * Vervang door je echte AI feedback flow als je controller klaar is.
  */
-router.post('/ai-feedback', async (req, res) => {
-  try {
-    const {
-      conversation_id = null,
-      event = null,            // e.g. "suggestion_shown" | "clicked" | "dismissed"
-      suggestion_id = null,
-      score = null,            // optional numeric score
-      comment = null,          // optional free text
-      meta = null,             // optional arbitrary object
-    } = req.body || {};
+router.post('/api/ai-feedback', requireAuth, async (req, res) => {
+  const { conversation_id, comment } = req.body || {};
+  if (!conversation_id) return res.status(400).json({ error: 'conversation_id_required' });
+  // await handleAiFeedback({ user: req.user, conversation_id, comment });
 
-    // Productielog (voor nu): schrijf naar stdout
-    console.log('[AI_FEEDBACK]', {
-      ts: new Date().toISOString(),
-      conversation_id,
-      event,
-      suggestion_id,
-      score,
-      comment,
-      meta,
-      ua: req.headers['user-agent'] || null,
-      ip: req.headers['x-forwarded-for'] || req.socket?.remoteAddress || null,
-    });
-
-    if (!event) {
-      // Voor MVP: nooit 4xx op feedback; voorkom ruis in frontend
-      return res.status(200).json({ ok: true, note: 'no_event_specified' });
-    }
-
-    return res.status(200).json({ ok: true });
-  } catch (err) {
-    console.error('[AI_FEEDBACK][ERROR]', err);
-    return res.status(500).json({ error: 'internal_error' });
-  }
+  return res.status(202).json({ ok: true });
 });
 
 module.exports = router;
