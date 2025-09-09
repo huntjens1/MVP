@@ -3,6 +3,7 @@ import { supabase } from '../supabaseClient.js';
 import { requireAuth } from '../middlewares/auth.js';
 import { requireRole } from '../middlewares/requireRole.js';
 
+const express = require('express');
 const router = express.Router();
 
 router.get('/api/tenants',
@@ -19,3 +20,4 @@ router.get('/api/tenants',
 
 // **Dit is de enige juiste export voor ESM/Express!**
 export default router;
+module.exports = router;

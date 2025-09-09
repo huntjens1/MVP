@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import OpenAI from 'openai';
 
-const router = Router();
+const express = require('express');
+const router = express.Router();
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // NB: zet in Railway/Vercel: OPENAI_API_KEY=<jouw key>
@@ -57,3 +58,4 @@ Als er geen duidelijke vervolgvraag is, return een lege lijst.
 });
 
 export default router;
+module.exports = router;

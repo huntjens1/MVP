@@ -2,6 +2,7 @@ import express from 'express';
 import { requireAuth } from '../middlewares/auth.js';
 import { supabase } from '../supabaseClient.js';
 
+const express = require('express');
 const router = express.Router();
 
 router.post('/api/conversations', requireAuth, async (req, res) => {
@@ -51,3 +52,4 @@ router.post('/api/conversations/:id/close', requireAuth, async (req, res) => {
 });
 
 export default router;
+module.exports = router;

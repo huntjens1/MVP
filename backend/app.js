@@ -17,19 +17,19 @@ const tenants = require('./routes/tenants');
 const analytics = require('./routes/analytics');
 
 // 🔥 NIEUW: SSE endpoints
-const suggestions = require('./routes/suggestions');    // GET /api/suggestions
-const assistStream = require('./routes/assistStream');  // GET /api/assist-stream
+//   zorg dat er CommonJS routers bestaan op:
+//   backend/routes/suggestions.js   -> GET /api/suggestions (SSE)
+//   backend/routes/assistStream.js  -> GET /api/assist-stream (SSE)
+const suggestions = require('./routes/suggestions');
+const assistStream = require('./routes/assistStream');
 
 // --- Optionele cookie-parser (fallback als package ontbreekt) ---
 let cookieParser = null;
 try {
-  // Probeer echte cookie-parser te gebruiken als hij geïnstalleerd is
-  cookieParser = require('cookie-parser');
+  cookieParser = require('cookie-parser');       // echte lib als aanwezig
 } catch (_) {
   cookieParser = null;
 }
-
-// Kleine veilige parser als fallback (alleen eenvoudige name=value;name2=value2)
 function fallbackCookieMiddleware(req, _res, next) {
   const header = req.headers.cookie || '';
   const out = {};
@@ -48,6 +48,7 @@ function fallbackCookieMiddleware(req, _res, next) {
 
 const app = express();
 app.disable('x-powered-by');
+app.set('trust proxy', 1);
 
 // Telemetry
 app.use(telemetry());
