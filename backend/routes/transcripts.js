@@ -2,6 +2,7 @@ import express from 'express';
 import { requireAuth } from '../middlewares/auth.js';
 import { supabase } from '../supabaseClient.js';
 
+const express = require('express');
 const router = express.Router();
 
 router.post('/api/transcripts/ingest', requireAuth, async (req, res) => {
@@ -16,5 +17,5 @@ router.post('/api/transcripts/ingest', requireAuth, async (req, res) => {
   if (error) return res.status(500).json({ error: 'insert transcript mislukt' });
   return res.json({ ok: true });
 });
-
+module.exports = router;
 export default router;

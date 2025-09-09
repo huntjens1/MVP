@@ -10,7 +10,7 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "cookie-parser": "^1.4.7",
+    "cookie-parser": "^1.4.6",
     "cors": "2.8.5",
     "express": "^4.21.2",
     "express-rate-limit": "7.4.0",

@@ -2,21 +2,14 @@
 const express = require('express');
 const router = express.Router();
 
-// Let op: dit is jullie bestaande stream handler
-// Pad laten matchen met jullie repo-structuur:
+// De SSE handler die je al hebt
+//   - default export: suggestionsSSE
+//   - (optioneel) named export: assistStream (zie bestand hieronder)
 const suggestionsSSE = require('../streams/suggestionsSSE');
 
-/**
- * Server-Sent Events voor AI-vraagsuggesties
- * Query: ?conversation_id=UUID
- */
-router.get('/suggestions', async (req, res, next) => {
-  try {
-    // De handler schrijft zelf SSE headers en events naar res
-    await suggestionsSSE(req, res);
-  } catch (err) {
-    next(err);
-  }
+router.get('/suggestions', (req, res) => {
+  // Laat de dedicated SSE-module alle headers / keep-alive doen
+  return suggestionsSSE(req, res);
 });
 
 module.exports = router;
