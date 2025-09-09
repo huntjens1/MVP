@@ -1,20 +1,19 @@
-import jwt from 'jsonwebtoken';
+/* backend/middlewares/auth.js */
+const jwt = require('jsonwebtoken');
 
-export function requireAuth(req, res, next) {
+function requireAuth(req, res, next) {
   try {
-    // 1) Cookie (oude weg)
-    let raw = req.cookies?.auth;
+    // 1) cookie (auth)
+    let raw = req.cookies && req.cookies.auth;
 
-    // 2) Bearer header (Authorization: Bearer <jwt>)
+    // 2) Bearer header
     if (!raw) {
-      const h = req.get('authorization') || '';
+      const h = (req.get('authorization') || '').trim();
       if (h.toLowerCase().startsWith('bearer ')) raw = h.slice(7).trim();
     }
 
-    // 3) Query token (?token=...)
-    if (!raw && typeof req.query?.token === 'string') {
-      raw = req.query.token;
-    }
+    // 3) query token (?token=...)
+    if (!raw && typeof req.query?.token === 'string') raw = req.query.token;
 
     if (!raw) return res.status(401).json({ error: 'Unauthorized' });
 
@@ -22,10 +21,13 @@ export function requireAuth(req, res, next) {
     req.user = {
       id: payload.uid,
       tenant_id: payload.tenant_id,
-      role: payload.role || 'support',
+      role: payload.role || 'support'
     };
-    next();
+
+    return next();
   } catch {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 }
+
+module.exports = { requireAuth };

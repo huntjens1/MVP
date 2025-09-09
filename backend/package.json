@@ -2,21 +2,28 @@
   "name": "calllogix-backend",
   "version": "0.1.0",
   "private": true,
-  "type": "commonjs",
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "start": "node index.js"
+    "start": "node -r esm index.js",
+    "dev": "nodemon -r esm index.js"
   },
   "dependencies": {
+    "axios": "^1.7.5",
     "cookie-parser": "^1.4.6",
-    "cors": "2.8.5",
-    "express": "^4.21.2",
-    "express-rate-limit": "7.4.0",
-    "helmet": "7.1.0",
-    "morgan": "^1.10.1",
-    "ws": "^8.17.0",
-    "zod": "3.23.8"
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "esm": "^3.2.25",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "node-fetch": "^3.3.2",
+    "uuid": "^9.0.1",
+    "ws": "^8.18.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
   }
 }
