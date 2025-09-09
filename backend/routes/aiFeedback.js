@@ -1,29 +1,57 @@
-import express from 'express';
-import { requireAuth } from '../middlewares/auth.js';
-import { supabase } from '../supabaseClient.js';
-
+// backend/routes/aiFeedback.js
+const express = require('express');
 const router = express.Router();
 
-router.post('/api/ai-feedback', requireAuth, async (req, res) => {
-  const user = req.user;
-  const { suggestion_id, conversation_id, feedback, suggestion_text } = req.body || {};
-  if (!conversation_id || typeof feedback === 'undefined') {
-    return res.status(400).json({ error: 'conversation_id en feedback vereist' });
-  }
+/**
+ * POST /api/ai-feedback
+ * Wordt aangeroepen door de frontend om AI-gerelateerde feedback op te slaan
+ * (bijv. thumbs up/down op een suggestie, opmerking, ranking, etc.).
+ *
+ * Body (alles optioneel; we vangen defensief af voor MVP):
+ * {
+ *   conversation_id?: string,
+ *   event?: string,          // bijv. "suggestion_like" | "suggestion_dislike" | ...
+ *   suggestion_id?: string,
+ *   score?: number,          // bijv. -1, 0, 1 of 1..5
+ *   comment?: string,
+ *   meta?: object
+ * }
+ */
+router.post('/ai-feedback', async (req, res) => {
+  try {
+    const {
+      conversation_id = null,
+      event = null,
+      suggestion_id = null,
+      score = null,
+      comment = null,
+      meta = null,
+    } = (req.body || {});
 
-  const { error } = await supabase
-    .from('ai_suggestion_feedback')
-    .insert({
-      suggestion_id: suggestion_id || null,
+    // Voor nu loggen we dit (MVP). Later kun je dit wegschrijven naar DB / analytics.
+    console.log('[AI_FEEDBACK]', {
+      ts: new Date().toISOString(),
       conversation_id,
-      user_id: user.id,
-      feedback,           // -1 / 0 / 1
-      suggestion_text: suggestion_text || null,
-      tenant_id: user.tenant_id
+      event,
+      suggestion_id,
+      score,
+      comment,
+      meta,
+      ua: req.headers['user-agent'] || null,
+      ip: req.headers['x-forwarded-for'] || req.socket?.remoteAddress || null,
     });
 
-  if (error) return res.status(500).json({ error: 'feedback insert mislukt' });
-  return res.json({ ok: true });
+    // Minimalistische validatie; nooit 500 teruggeven op user input
+    if (!event) {
+      return res.status(200).json({ ok: true, note: 'no_event_specified' });
+    }
+
+    // Simpel ACK voor MVP
+    return res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error('[AI_FEEDBACK][ERROR]', err);
+    return res.status(500).json({ error: 'internal_error' });
+  }
 });
 
-export default router;
+module.exports = router;
