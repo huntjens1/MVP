@@ -1,70 +1,77 @@
 // backend/app.js
 const express = require('express');
-const helmet = require('helmet');
-const morgan = require('morgan');
-const rateLimit = require('express-rate-limit');
+const cookieParser = require('cookie-parser');
 
-const { strictCors } = require('./middlewares/cors');
-const { tenantResolver } = require('./middlewares/tenant');
-const { telemetry } = require('./middlewares/telemetry');
+const applyCors = require('./middlewares/cors');
+const telemetry = require('./middlewares/telemetry');
 
-const authRouter      = require('./routes/auth');
-const wsTokenRouter   = require('./routes/wsToken');
-const summarizeRouter = require('./routes/summarize');
-const suggestRouter   = require('./routes/suggest');
-const feedbackRouter  = require('./routes/feedback');
+// Bestaande routers/services
+const auth = require('./routes/auth');
+const me = require('./routes/auth'); // me route hangt meestal ook in auth router
+const wsToken = require('./routes/wsToken');
+const summarize = require('./routes/summarize');
+const suggest = require('./routes/suggest');         // POST /api/suggest (bestond al)
+const feedback = require('./routes/feedback');
+const aiFeedback = require('./routes/aiFeedback');
+const transcripts = require('./routes/transcripts');
+const conversations = require('./routes/conversations');
+const tenants = require('./routes/tenants');
+const analytics = require('./routes/analytics');
+
+// 🔥 NIEUW: SSE endpoints
+const suggestions = require('./routes/suggestions');  // GET /api/suggestions (SSE)
+const assistStream = require('./routes/assistStream'); // GET /api/assist-stream (SSE)
 
 const app = express();
-app.set('trust proxy', 1);
-app.disable('etag'); // voorkom 304 op /api/me (spaarder voor edge-caches)
 
-// ===== CORS & preflight =====
-app.use(strictCors);
-app.options('*', strictCors);
+// Basic hardening
+app.disable('x-powered-by');
 
-// ===== Body parsing =====
+// Telemetry (request id, timing, etc.)
+app.use(telemetry());
+
+// JSON & cookies
 app.use(express.json({ limit: '1mb' }));
+app.use(cookieParser());
 
-// ===== Tenant scoping (na CORS) =====
-app.use(tenantResolver);
+// CORS (credentials true + origin allowlist/regex zit in jullie middleware)
+app.use(applyCors());
 
-// ===== Security =====
-app.use(helmet({ crossOriginResourcePolicy: false }));
+// Health
+app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
-// ===== Telemetry =====
-app.use(telemetry);
+// Auth
+app.use('/api', auth);
 
-// ===== Logging =====
-morgan.token('tenant', (_req, res) => (res?.locals?.tenant_id || 'unknown'));
-morgan.token('rid',    (_req, res) => (res?.locals?.request_id || '-'));
-app.use(morgan(':method :url :status :res[content-length] - :response-time ms tenant=:tenant rid=:rid'));
+// Core API
+app.use('/api', wsToken);
+app.use('/api', summarize);
+app.use('/api', suggest);
+app.use('/api', feedback);
+app.use('/api', aiFeedback);
+app.use('/api', transcripts);
+app.use('/api', conversations);
+app.use('/api', tenants);
+app.use('/api', analytics);
 
-// ===== Rate limits =====
-const generalLimiter = rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: 'draft-7', legacyHeaders: false });
-const tokenLimiter   = rateLimit({ windowMs: 60_000, limit: 20,  standardHeaders: 'draft-7', legacyHeaders: false });
+// 🔥 Mount de nieuwe SSE-routes (dit voorkómt de 404's die je nu ziet)
+app.use('/api', suggestions);   // -> GET /api/suggestions?conversation_id=...
+app.use('/api', assistStream);  // -> GET /api/assist-stream?conversation_id=...
 
-app.use('/api/', generalLimiter);
-app.use('/api/ws-token', tokenLimiter);
+// 404 fallback
+app.use((req, res) => {
+  res.status(404).json({ error: 'not_found', path: req.path });
+});
 
-// ===== Health =====
-app.get('/health', (_req, res) => res.json({ ok: true }));
-
-// ===== Routes =====
-app.use('/api', authRouter);              // /api/login, /api/logout, /api/me
-app.use('/api/ws-token', wsTokenRouter);  // WebSocket toegangstoken
-app.use('/api/summarize', summarizeRouter);
-app.use('/api/suggest',   suggestRouter); // POST + SSE stream
-app.use('/api/feedback',  feedbackRouter);
-app.use('/api/assist', require('./routes/assist'));      // Next-Best-Action + intent (SSE+POST)
-app.use('/api/ticket', require('./routes/ticket'));      // Live Ticket Skeleton (POST)
-
-// Compat-aliassen (oude frontends)
-app.use('/ws-token', wsTokenRouter);
-app.use('/api/ai/summarize', summarizeRouter);
-app.use('/api/ai/feedback',  feedbackRouter);
-app.use('/api/suggestQuestion', suggestRouter);
-
-// 404
-app.use((_req, res) => res.status(404).json({ error: 'Not Found' }));
+// Error handler
+// (zorgt dat we nette JSON teruggeven)
+app.use((err, _req, res, _next) => {
+  console.error('[ERROR]', err);
+  const status = err.status || 500;
+  res.status(status).json({
+    error: err.code || 'internal_error',
+    message: err.message || 'Unexpected error',
+  });
+});
 
 module.exports = app;
