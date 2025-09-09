@@ -1,34 +1,26 @@
-// frontend/src/components/CallLogixTranscriptie.tsx
 import { useEffect, useRef, useState } from "react";
-import api from "../api";
+import api from "../api/index";
+import type { TicketSkeleton } from "../api/index";
 import { startMicPcm16k, type MicStopper } from "../lib/capturePcm16k";
+import { maskPII } from "../utils/pii";
 
-/** ===== Types die meerdere Deepgram-vormen afdekken ===== */
 type DGAlt = {
   transcript?: string;
-  confidence?: number;
-  words?: Array<{
-    word?: string;
-    start?: number;
-    end?: number;
-    speaker?: number; // aanwezig bij diarization
-  }>;
+  words?: Array<{ speaker?: number }>;
 };
-
-type DGRealtime =
-  | {
-      type?: string; // "Results" | "UtteranceEnd" | ...
-      channel?: { alternatives?: DGAlt[]; is_final?: boolean };
-      alternatives?: DGAlt[];
-      is_final?: boolean;
-    }
-  | Record<string, unknown>;
+type DGRealtime = {
+  channel?: { alternatives?: DGAlt[]; is_final?: boolean };
+  alternatives?: DGAlt[];
+  is_final?: boolean;
+  type?: string;
+} | any;
 
 type Segment = {
   id: string;
   speaker: "Agent" | "Klant";
-  text: string;
+  text: string;   // masked
   final: boolean;
+  flagged: boolean;
 };
 
 export default function CallLogixTranscriptie() {
@@ -36,28 +28,46 @@ export default function CallLogixTranscriptie() {
   const [segments, setSegments] = useState<Segment[]>([]);
   const [interim, setInterim] = useState<string>("");
 
-  const [suggestions, setSuggestions] = useState<string[]>([]);
-  const sseRef = useRef<EventSource | null>(null);
+  // RHS panels (lazy import to avoid circular)
+  const RightPanel = require("./RightPanel").default as typeof import("./RightPanel").default;
 
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [nextActions, setNextActions] = useState<string[]>([]);
+  const [runbook, setRunbook] = useState<string[]>([]);
+  const [ticket, setTicket] = useState<TicketSkeleton | null>(null);
+  const [slaBadge, setSlaBadge] = useState<string>("P4 · TTR ~48u");
+
+  // infra
   const wsRef = useRef<WebSocket | null>(null);
   const micStopRef = useRef<MicStopper | null>(null);
   const convoIdRef = useRef<string>("");
+  const sseSuggestRef = useRef<EventSource | null>(null);
+  const sseAssistRef = useRef<EventSource | null>(null);
+  const debounceTicket = useRef<number | null>(null);
+  const lastActivityRef = useRef<number>(Date.now());
+  const [coach, setCoach] = useState<string>("");
 
-  // ===== Cleanup =====
   useEffect(() => {
     return () => { void stopRecording(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ===== Helpers =====
+  // Dead-air coach
+  useEffect(() => {
+    const iv = setInterval(() => {
+      if (!recording) return;
+      const idle = Date.now() - lastActivityRef.current;
+      setCoach(idle > 8000 ? "Tip: vat samen of stel een verduidelijkingsvraag." : "");
+    }, 2000);
+    return () => clearInterval(iv);
+  }, [recording]);
+
   function buildWsUrl(token: string) {
     const base = (import.meta.env.VITE_API_BASE_URL as string) || "";
     const wssBase = base.replace(/^http/i, "ws");
     const url = new URL(`${wssBase}/ws/mic`);
     url.searchParams.set("conversation_id", convoIdRef.current);
     url.searchParams.set("token", token);
-
-    // realtime-compatibele params
     url.searchParams.set("codec", "linear16");
     url.searchParams.set("sample_rate", "16000");
     url.searchParams.set("language", "nl");
@@ -68,131 +78,117 @@ export default function CallLogixTranscriptie() {
     return url.toString();
   }
 
-  function lastNText(n = 3) {
-    const pick = segments.slice(-n).map(s => `${s.speaker}: ${s.text}`);
-    return pick.join("\n");
-  }
-
-  /** Robuust: accepteert string, Blob, ArrayBuffer */
   function onWsMessage(ev: MessageEvent) {
-    const handleString = (s: string) => {
-      try {
-        const msg: DGRealtime = JSON.parse(s);
-        handleDG(msg);
-      } catch { /* ignore */ }
-    };
-    if (typeof ev.data === "string") {
-      handleString(ev.data);
-    } else if (ev.data instanceof ArrayBuffer) {
+    const handleString = (s: string) => { try { handleDG(JSON.parse(s)); } catch {} };
+    if (typeof ev.data === "string") return handleString(ev.data);
+    if (ev.data instanceof ArrayBuffer) {
       const txt = new TextDecoder().decode(new Uint8Array(ev.data));
-      handleString(txt);
-    } else if (ev.data && typeof (ev.data as Blob).text === "function") {
+      return handleString(txt);
+    }
+    if (ev.data && typeof (ev.data as Blob).text === "function") {
       (ev.data as Blob).text().then(handleString).catch(() => {});
     }
   }
 
-  /** Extract transcript + speaker en update UI (+ trigger suggesties) */
   async function handleDG(msg: DGRealtime) {
-    const isFinal = Boolean(
-      (msg as any)?.channel?.is_final ?? (msg as any)?.is_final ?? false
-    );
+    const isFinal = Boolean(msg?.channel?.is_final ?? msg?.is_final ?? false);
+    const alt: DGAlt | undefined = msg?.channel?.alternatives?.[0] ?? msg?.alternatives?.[0];
+    const textRaw = (alt?.transcript || "").trim();
+    if (!textRaw && !isFinal) return;
 
-    const alt: DGAlt | undefined =
-      (msg as any)?.channel?.alternatives?.[0] ??
-      (msg as any)?.alternatives?.[0];
+    lastActivityRef.current = Date.now();
 
-    const text = (alt?.transcript || "").trim();
-    if (!text && !isFinal) return;
-
-    // simpele speaker-herleiding op basis van diarization-woorden
     let speaker: "Agent" | "Klant" = "Klant";
     const sp = alt?.words?.find((w) => typeof w.speaker === "number")?.speaker;
     if (sp === 1) speaker = "Agent";
-    if (sp === 2) speaker = "Klant";
 
     if (isFinal) {
       setInterim("");
-      if (text) {
+      if (textRaw) {
+        const { masked, flagged } = maskPII(textRaw);
         setSegments((list) => {
-          const next = [...list, { id: crypto.randomUUID(), speaker, text, final: true }];
-          // na commit: stuur prompt naar suggesties
-          void sendSuggestions(`${lastNFrom(next, 2)}\n${speaker}: ${text}`);
+          const seg: Segment = { id: crypto.randomUUID(), speaker, text: masked, final: true, flagged };
+          const next = [...list, seg];
+          const ctx = lastN(next, 4);
+
+          // triggers
+          void api.suggest(convoIdRef.current, ctx).catch(() => {});
+          void api.assist(convoIdRef.current, ctx).catch(() => {});
+          if (debounceTicket.current) window.clearTimeout(debounceTicket.current);
+          debounceTicket.current = window.setTimeout(async () => {
+            try {
+              const r = await api.ticketSkeleton(convoIdRef.current, ctx);
+              setTicket(r.skeleton);
+              setSlaBadge(`${r.skeleton.priority} · TTR ~${r.skeleton.ttr_minutes}m`);
+            } catch {}
+          }, 1200);
+
           return next;
         });
       }
     } else {
-      setInterim(text);
+      const { masked } = maskPII(textRaw);
+      setInterim(masked);
     }
   }
 
-  function lastNFrom(list: Segment[], n: number) {
+  function lastN(list: Segment[], n: number) {
     return list.slice(-n).map(s => `${s.speaker}: ${s.text}`).join("\n");
   }
 
-  async function openSuggestionsStream() {
-    const base = import.meta.env.VITE_API_BASE_URL as string;
-    const url = `${base}/api/suggest/stream?conversation_id=${encodeURIComponent(convoIdRef.current)}`;
-    const es = new EventSource(url, { withCredentials: true });
-    es.addEventListener("suggestions", (e: MessageEvent) => {
+  async function openStreams() {
+    const esSug = api.suggestStream(convoIdRef.current);
+    sseSuggestRef.current = esSug;
+    esSug.addEventListener("suggestions", (ev: MessageEvent) => {
       try {
-        const payload = JSON.parse(e.data);
-        if (payload?.conversation_id !== convoIdRef.current) return;
-        const items: string[] = Array.isArray(payload.suggestions) ? payload.suggestions : [];
-        if (items.length) setSuggestions(items);
-      } catch {/* noop */}
+        const data = JSON.parse(ev.data) as { conversation_id: string; suggestions: string[] };
+        if (data.conversation_id !== convoIdRef.current) return;
+        setSuggestions(data.suggestions || []);
+      } catch {}
     });
-    es.onerror = () => { /* laat SSE reconnecten */ };
-    sseRef.current = es;
+    esSug.onerror = () => {};
+
+    const esAss = api.assistStream(convoIdRef.current);
+    sseAssistRef.current = esAss;
+    esAss.addEventListener("assist", (ev: MessageEvent) => {
+      try {
+        const data = JSON.parse(ev.data) as {
+          conversation_id: string;
+          intent: string;
+          next_best_actions: string[];
+          runbook_steps: string[];
+        };
+        if (data.conversation_id !== convoIdRef.current) return;
+        setNextActions(data.next_best_actions || []);
+        setRunbook(data.runbook_steps || []);
+      } catch {}
+    });
+    esAss.onerror = () => {};
   }
 
-  async function sendSuggestions(context: string) {
-    try {
-      const base = import.meta.env.VITE_API_BASE_URL as string;
-      await fetch(`${base}/api/suggest`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          conversation_id: convoIdRef.current,
-          text: context || lastNText(3),
-        }),
-      });
-      // antwoord komt via SSE binnen; niets doen hier
-    } catch (e) {
-      console.warn("[suggest]", (e as Error).message);
-    }
-  }
-
-  // ===== Start / Stop =====
   async function startRecording() {
     if (recording) return;
-    setSegments([]);
-    setInterim("");
-    setSuggestions([]);
+    setSegments([]); setInterim(""); setSuggestions([]); setNextActions([]); setRunbook([]); setTicket(null);
+    setCoach(""); setSlaBadge("P4 · TTR ~48u");
     convoIdRef.current = crypto.randomUUID();
 
-    // SSE voor suggesties openen vóór audio start
-    await openSuggestionsStream();
+    await openStreams();
 
     const t = await api.wsToken();
     const wsUrl = buildWsUrl(t.token);
-
     const ws = new WebSocket(wsUrl);
     ws.binaryType = "arraybuffer";
     ws.onmessage = onWsMessage;
-    ws.onerror = () => {};
-    ws.onclose  = () => {};
     ws.onopen = async () => {
       try {
         const stop = await startMicPcm16k(ws, { onError: (e) => console.warn("[mic]", e.message) });
         micStopRef.current = stop;
         setRecording(true);
-      } catch (e) {
-        console.error(e);
+        lastActivityRef.current = Date.now();
+      } catch {
         try { ws.close(); } catch {}
       }
     };
-
     wsRef.current = ws;
   }
 
@@ -202,26 +198,31 @@ export default function CallLogixTranscriptie() {
     micStopRef.current = null;
     try { wsRef.current?.close(); } catch {}
     wsRef.current = null;
-    try { sseRef.current?.close(); } catch {}
-    sseRef.current = null;
+    try { sseSuggestRef.current?.close(); } catch {}
+    sseSuggestRef.current = null;
+    try { sseAssistRef.current?.close(); } catch {}
+    sseAssistRef.current = null;
+    if (debounceTicket.current) { window.clearTimeout(debounceTicket.current); debounceTicket.current = null; }
   }
 
-  // ===== UI =====
+  // Hotkeys
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey && e.shiftKey)) return;
+      if (e.code === "KeyS") { e.preventDefault(); recording ? void stopRecording() : void startRecording(); }
+      if (e.code === "KeyD") { e.preventDefault(); navigator.clipboard.writeText((segments.map(s=>s.text).join(" ")).slice(0,4000)); }
+      if (e.code === "KeyK") { e.preventDefault(); if (suggestions[0]) navigator.clipboard.writeText(suggestions[0]); }
+      if (e.code === "KeyN") { e.preventDefault(); if (nextActions[0]) navigator.clipboard.writeText(nextActions[0]); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [recording, segments, suggestions, nextActions]);
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 24 }}>
-      {/* Content */}
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", gap: 24 }}>
       <section>
-        {/* Controls */}
-        <div
-          style={{
-            position: "sticky",
-            top: 0,
-            background: "#fff",
-            padding: "8px 0 16px",
-            zIndex: 5,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ position:"sticky", top:0, background:"#fff", padding:"8px 0 12px", zIndex:5 }}>
+          <div style={{ display:"flex", alignItems:"center", gap: 12, flexWrap:"wrap" }}>
             <button
               onClick={recording ? () => void stopRecording() : () => void startRecording()}
               style={{
@@ -237,127 +238,102 @@ export default function CallLogixTranscriptie() {
             >
               {recording ? "Stop opname" : "Start opname"}
             </button>
-            <span
-              style={{
-                padding: "6px 10px",
-                borderRadius: 999,
-                background: recording ? "rgba(239,68,68,.1)" : "rgba(17,24,39,.06)",
-                color: recording ? "#ef4444" : "#111827",
-                fontWeight: 600,
-              }}
-            >
+
+            <span style={{
+              padding:"6px 10px", borderRadius:999,
+              background: recording ? "rgba(239,68,68,.1)" : "rgba(17,24,39,.06)",
+              color: recording ? "#ef4444" : "#111827", fontWeight:600,
+            }}>
               {recording ? "Live…" : "Niet actief"}
             </span>
+
+            <span style={{
+              marginLeft:"auto",
+              padding:"6px 10px",
+              border:"1px solid #e5e7eb",
+              borderRadius:999,
+              background:"#fff",
+              fontWeight:700
+            }}>{slaBadge}</span>
           </div>
+
+          {coach && (
+            <div style={{
+              marginTop:8, border:"1px dashed #f59e0b", background:"rgba(245,158,11,0.08)",
+              color:"#92400e", borderRadius:10, padding:"8px 10px", fontWeight:600
+            }}>{coach}</div>
+          )}
         </div>
 
-        {/* Transcript */}
         <h2 style={{ fontSize: 28, margin: "6px 0 12px" }}>Live Transcriptie</h2>
 
-        <div style={{ display: "grid", gap: 10 }}>
-          {segments.length === 0 && !interim ? (
-            <div
-              style={{
-                border: "1px solid #e5e7eb",
-                borderRadius: 12,
-                padding: 16,
-                color: "#9ca3af",
-                background: "#fff",
-              }}
-            >
+        <div style={{ display:"grid", gap:10 }}>
+          {segments.length===0 && !interim ? (
+            <div style={{ border:"1px solid #e5e7eb", borderRadius:12, padding:16, color:"#9ca3af", background:"#fff" }}>
               Nog geen tekst…
             </div>
           ) : null}
 
           {segments.map((s) => (
-            <Bubble key={s.id} speaker={s.speaker} text={s.text} />
+            <Bubble key={s.id} speaker={s.speaker} text={s.text} dimmed={false} flagged={s.flagged}/>
           ))}
 
-          {interim ? <Bubble speaker={"Klant"} text={interim} dimmed /> : null}
+          {interim ? <Bubble speaker={"Klant"} text={interim} dimmed flagged={false}/> : null}
         </div>
       </section>
 
-      {/* Suggesties */}
-      <aside>
-        <h3 style={{ fontSize: 18, margin: "4px 0 12px" }}>AI Vraagsuggesties</h3>
-        {suggestions.length === 0 ? (
-          <div style={{ opacity: 0.6 }}>Nog geen suggesties…</div>
-        ) : (
-          <ul style={{ display: "grid", gap: 8, padding: 0, listStyle: "none" }}>
-            {suggestions.map((s, i) => (
-              <li key={i}
-                  style={{
-                    border: "1px solid #e5e7eb",
-                    borderRadius: 10,
-                    background: "#fff",
-                    padding: "10px 12px",
-                    lineHeight: 1.35,
-                  }}>
-                {s}
-              </li>
-            ))}
-          </ul>
-        )}
-      </aside>
+      <RightPanel
+        nextActions={nextActions}
+        runbook={runbook}
+        suggestions={suggestions}
+        ticket={ticket}
+      />
     </div>
   );
 }
 
-/** Speech bubble per speaker */
-function Bubble({
-  speaker,
-  text,
-  dimmed,
-}: {
-  speaker: "Agent" | "Klant";
-  text: string;
-  dimmed?: boolean;
+function Bubble({ speaker, text, dimmed, flagged }:{
+  speaker:"Agent"|"Klant"; text:string; dimmed?:boolean; flagged?:boolean;
 }) {
   const isAgent = speaker === "Agent";
   return (
-    <div
-      style={{
-        display: "flex",
-        gap: 10,
-        alignItems: "flex-start",
-        justifyContent: isAgent ? "flex-end" : "flex-start",
-      }}
-    >
-      {!isAgent && <Badge label="Klant" />}
+    <div style={{ display:"flex", gap:10, alignItems:"flex-start", justifyContent: isAgent ? "flex-end" : "flex-start" }}>
+      {!isAgent && <Badge label="Klant" dark={false} />}
       <div
         style={{
-          maxWidth: "70ch",
-          whiteSpace: "pre-wrap",
-          border: "1px solid #e5e7eb",
+          maxWidth:"72ch", whiteSpace:"pre-wrap",
+          border:"1px solid #e5e7eb",
           background: isAgent ? "#111827" : "#fff",
           color: isAgent ? "#fff" : "#111827",
           opacity: dimmed ? 0.6 : 1,
-          padding: "10px 12px",
-          borderRadius: 12,
+          padding:"10px 12px", borderRadius:12,
+          position:"relative"
         }}
+        title={flagged ? "Gevoelige informatie automatisch gemaskeerd (AVG)" : undefined}
       >
         {text}
+        {flagged ? (
+          <span style={{ position:"absolute", top:6, right:8, fontSize:10, background:"#fee2e2", color:"#991b1b", borderRadius:6, padding:"2px 6px" }}>
+            PII
+          </span>
+        ) : null}
       </div>
       {isAgent && <Badge label="Agent" dark />}
     </div>
   );
 }
 
-function Badge({ label, dark }: { label: string; dark?: boolean }) {
+function Badge({ label, dark }:{label:string; dark?:boolean}) {
   return (
     <span
       style={{
-        alignSelf: "center",
-        fontSize: 12,
-        fontWeight: 700,
-        color: dark ? "#111827" : "#111827",
-        background: "rgba(17,24,39,.06)",
-        border: "1px solid #e5e7eb",
-        padding: "4px 8px",
-        borderRadius: 999,
+        alignSelf:"center",
+        fontSize:12, fontWeight:700,
+        color: dark ? "#fff" : "#111827",
+        background: dark ? "#111827" : "rgba(17,24,39,.06)",
+        border: dark ? "1px solid #111827" : "1px solid #e5e7eb",
+        padding:"4px 8px", borderRadius:999
       }}
-    >
-      {label}
-    </span>
+    >{label}</span>
   );
 }

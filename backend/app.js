@@ -55,6 +55,8 @@ app.use('/api/ws-token', wsTokenRouter);  // WebSocket toegangstoken
 app.use('/api/summarize', summarizeRouter);
 app.use('/api/suggest',   suggestRouter); // POST + SSE stream
 app.use('/api/feedback',  feedbackRouter);
+app.use('/api/assist', require('./routes/assist'));      // Next-Best-Action + intent (SSE+POST)
+app.use('/api/ticket', require('./routes/ticket'));      // Live Ticket Skeleton (POST)
 
 // Compat-aliassen (oude frontends)
 app.use('/ws-token', wsTokenRouter);
