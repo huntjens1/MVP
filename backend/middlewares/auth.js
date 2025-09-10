@@ -1,30 +1,26 @@
-/* backend/middlewares/auth.js */
 const jwt = require('jsonwebtoken');
 
 function requireAuth(req, res, next) {
   try {
-    // 1) cookie (auth)
-    let raw = req.cookies && req.cookies.auth;
+    let token = req.cookies?.auth;
 
-    // 2) Bearer header
-    if (!raw) {
+    if (!token) {
       const h = (req.get('authorization') || '').trim();
-      if (h.toLowerCase().startsWith('bearer ')) raw = h.slice(7).trim();
+      if (h.toLowerCase().startsWith('bearer ')) token = h.slice(7).trim();
     }
+    if (!token && typeof req.query?.token === 'string') token = req.query.token;
 
-    // 3) query token (?token=...)
-    if (!raw && typeof req.query?.token === 'string') raw = req.query.token;
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
-    if (!raw) return res.status(401).json({ error: 'Unauthorized' });
-
-    const payload = jwt.verify(raw, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+    const payload = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
     req.user = {
       id: payload.uid,
+      email: payload.email,
+      name: payload.name,
       tenant_id: payload.tenant_id,
-      role: payload.role || 'support'
+      role: payload.role || 'agent',
     };
-
-    return next();
+    next();
   } catch {
     return res.status(401).json({ error: 'Unauthorized' });
   }

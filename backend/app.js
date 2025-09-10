@@ -1,60 +1,59 @@
-/* backend/app.js */
-require('dotenv').config();
-
 const express = require('express');
-const cors = require('cors');
-const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
+const compression = require('compression');
+const morgan = require('morgan');
+const path = require('path');
+
+const { corsMiddleware } = require('./middlewares/cors');
+const { errorHandler } = require('./middlewares/errorHandler'); // laat je bestaande handler staan
 
 const app = express();
 
-// ----------- CORS ----------
-const allowOrigins = [
-  // vercel front-end
-  /^https:\/\/mvp-[a-z0-9-]+\.vercel\.app$/,
-  // lokale dev
-  'http://localhost:5173'
-];
+// --- Security & infra
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
 
-app.use(cors({
-  origin(origin, cb) {
-    if (!origin) return cb(null, true); // curl/postman
-    if (allowOrigins.some(o => (o instanceof RegExp ? o.test(origin) : o === origin))) {
-      return cb(null, true);
-    }
-    return cb(new Error('Not allowed by CORS'));
-  },
-  credentials: true
-}));
-
-// ----------- common middlewares ----------
-app.use(morgan('combined'));
-app.use(express.json({ limit: '2mb' }));
-app.use(express.urlencoded({ extended: false }));
+// --- Parsers
 app.use(cookieParser());
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: true }));
 
-// ----------- health ----------
-app.get('/api/health', (_req, res) => res.json({ ok: true }));
+// --- CORS (met credentials)
+app.use(corsMiddleware());
 
-// ----------- routes (CJS of ESM – beide werken nu) ----------
-app.use('/api', require('./routes/auth'));              // POST /login, GET /me, POST /logout (voorbeeld)
-app.use('/api', require('./routes/wsToken'));           // POST /ws-token
-app.use('/api', require('./routes/conversations'));     // GET /conversations, etc.
-app.use('/api', require('./routes/transcripts'));       // transcript endpoints
-app.use('/api', require('./routes/summarize'));         // POST /summarize
-app.use('/api', require('./routes/suggest'));           // GET /suggestions
-app.use('/api', require('./routes/aiFeedback'));        // POST /ai-feedback
-app.use('/api', require('./routes/feedback'));          // POST /feedback
-app.use('/api', require('./routes/analytics'));         // analytics endpoints
-app.use('/api', require('./routes/tenants'));           // tenant endpoints
-app.use('/api', require('./routes/suggestQuestion'));   // suggest-question
-app.use('/api', require('./routes/assist-stream'));     // GET /assist-stream (als je die als aparte route hebt)
+// --- Logging & gzip
+app.use(morgan('dev'));
+app.use(compression());
 
-// ------------- 404 / error -------------
+// --- Static (optioneel)
+app.use('/public', express.static(path.join(__dirname, 'public')));
+
+// --- API routes (allemaal CommonJS routers)
+app.use('/api', require('./routes/auth'));
+app.use('/api', require('./routes/wsToken'));
+app.use('/api', require('./routes/conversations'));
+app.use('/api', require('./routes/transcripts'));
+app.use('/api', require('./routes/summarize'));
+app.use('/api', require('./routes/suggestions'));
+app.use('/api', require('./routes/assistStream'));
+
+// Optioneel: overige bestaande routers als je die gebruikt
+try { app.use('/api', require('./routes/assist')); } catch {}
+try { app.use('/api', require('./routes/analytics')); } catch {}
+try { app.use('/api', require('./routes/feedback')); } catch {}
+try { app.use('/api', require('./routes/aiFeedback')); } catch {}
+try { app.use('/api', require('./routes/tenants')); } catch {}
+try { app.use('/api', require('./routes/ticket')); } catch {}
+try { app.use('/api', require('./routes/suggest')); } catch {}
+try { app.use('/api', require('./routes/suggestQuestion')); } catch {}
+
+// --- Fallback not found
 app.use((req, res) => res.status(404).json({ error: 'Not Found' }));
-app.use((err, _req, res, _next) => {
-  console.error('[ERROR]', err);
+
+// --- Global error handler (laat je eigen implementatie bestaan)
+app.use(errorHandler || ((err, req, res, next) => {
+  console.error(err);
   res.status(500).json({ error: 'Internal Server Error' });
-});
+}));
 
 module.exports = app;

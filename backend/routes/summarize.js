@@ -1,25 +1,18 @@
 const express = require('express');
-const { z } = require('zod');
-// ⬇️ juiste pad: services/openai.js
-const { summarizeTranscriptNL } = require('../services/openai');
+const { requireAuth } = require('../middlewares/auth');
 
 const router = express.Router();
-const Body = z.object({ transcript: z.string().optional() });
 
-router.post('/', async (req, res) => {
-  const parsed = Body.safeParse(req.body || {});
-  if (!parsed.success) return res.json({ summary: '' });
+router.post('/summarize', requireAuth, async (req, res) => {
+  const { conversation_id } = req.body || {};
+  if (!conversation_id) return res.status(400).json({ error: 'conversation_id is required' });
 
-  const transcript = (parsed.data.transcript || '').trim();
-  if (!transcript) return res.json({ summary: '' });
-
-  try {
-    const summary = await summarizeTranscriptNL(transcript);
-    return res.json({ summary });
-  } catch (e) {
-    console.error('[summarize] error', e?.message);
-    return res.json({ summary: '' }); // soft-fail
-  }
+  res.json({
+    conversation_id,
+    summary: 'Samenvatting (placeholder).',
+    actions: [],
+    tags: [],
+  });
 });
 
 module.exports = router;

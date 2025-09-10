@@ -1,36 +1,34 @@
-// backend/streams/assistSSE.js
-const clients = new Map(); // conversation_id -> Set<res>
+/**
+ * Eenvoudige SSE helper voor assist stream.
+ * Vervang de TODO-blokken door je echte suggestie-logic of event bus.
+ */
+function startAssistSSE(res, { conversation_id }) {
+  res.status(200);
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+  });
+  res.flushHeaders?.();
 
-function subscribe(conversationId, res) {
-  if (!clients.has(conversationId)) clients.set(conversationId, new Set());
-  clients.get(conversationId).add(res);
+  // Welkomst event
+  res.write(`event: hello\n`);
+  res.write(`data: ${JSON.stringify({ ok: true, conversation_id })}\n\n`);
 
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache, no-transform");
-  res.setHeader("Connection", "keep-alive");
-  if (typeof res.flushHeaders === "function") res.flushHeaders();
+  // Init-batch (leeg)
+  res.write(`event: suggestion\ndata: ${JSON.stringify({ suggestions: [] })}\n\n`);
 
+  // Heartbeat
   const hb = setInterval(() => {
     try { res.write(`event: ping\ndata: {}\n\n`); } catch {}
-  }, 15000);
+  }, 20000);
 
-  res.on("close", () => {
-    clearInterval(hb);
-    const set = clients.get(conversationId);
-    if (set) {
-      set.delete(res);
-      if (set.size === 0) clients.delete(conversationId);
-    }
-  });
+  // Sluiten
+  const close = () => clearInterval(hb);
+  res.on('close', close);
+  res.on('error', close);
+
+  return close;
 }
 
-function emit(conversationId, payload) {
-  const set = clients.get(conversationId);
-  if (!set || set.size === 0) return;
-  const data = JSON.stringify(payload);
-  for (const res of set) {
-    try { res.write(`event: assist\ndata: ${data}\n\n`); } catch {}
-  }
-}
-
-module.exports = { subscribe, emit };
+module.exports = { startAssistSSE };
