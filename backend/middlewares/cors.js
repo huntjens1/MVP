@@ -1,4 +1,4 @@
-// CommonJS export van de middleware-functie zelf
+// CommonJS export: exporteer de middleware-functie zelf
 const { URL } = require('url');
 
 const parseOrigins = (csv = '') =>
@@ -12,6 +12,7 @@ function isAllowed(origin) {
   if (ANY) return true;
   try {
     const u = new URL(origin);
+    // normaliseer tot protocol + host (zonder path)
     return allowed.has(`${u.protocol}//${u.host}`);
   } catch {
     return false;
@@ -35,4 +36,4 @@ function corsMiddleware(req, res, next) {
   next();
 }
 
-module.exports = corsMiddleware;   // <-- exporteer de functie zelf
+module.exports = corsMiddleware;

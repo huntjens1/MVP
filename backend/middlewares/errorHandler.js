@@ -1,16 +1,21 @@
-// Centralized error handler (CommonJS)
-module.exports = function errorHandler(err, req, res, _next) {
+// Globale error handler - CommonJS
+module.exports = function errorHandler(err, req, res, next) {
   const status = err.status || err.statusCode || 500;
 
-  // Don’t leak stack in prod
-  const payload = {
-    error: err.expose ? err.message : (status >= 500 ? 'Internal Server Error' : err.message || 'Error')
-  };
-
+  // Log beknopt in productie; uitgebreider in development
   if (process.env.NODE_ENV !== 'production') {
-    payload.stack = err.stack;
-    payload.path = req.path;
+    // eslint-disable-next-line no-console
+    console.error('[error]', err);
+  } else {
+    // eslint-disable-next-line no-console
+    console.error('[error]', err.message);
   }
 
-  res.status(status).json(payload);
+  // Eenduidige JSON respons
+  res
+    .status(status)
+    .json({
+      error: err.publicMessage || err.message || 'Internal Server Error',
+      code: err.code || 'INTERNAL_ERROR'
+    });
 };
