@@ -1,29 +1,52 @@
-const DEFAULT_ORIGINS = [
-  'http://localhost:5173',
-  'http://localhost:3000',
-];
+// Explicit CORS allow-list with robust preflight handling
+const { URL } = require('url');
 
-function corsMiddleware() {
-  return (req, res, next) => {
-    const cfg = (process.env.FRONTEND_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean);
-    const allowlist = cfg.length ? cfg : DEFAULT_ORIGINS;
-    const origin = req.headers.origin;
+const parseOrigins = (csv) =>
+  (csv || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
 
-    if (origin && allowlist.includes(origin)) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-      res.setHeader('Vary', 'Origin');
-      res.setHeader('Access-Control-Allow-Credentials', 'true');
-      res.setHeader('Access-Control-Expose-Headers', 'x-request-id');
-    }
+const allowed = new Set(parseOrigins(process.env.FRONTEND_URLS));
+const ANY = process.env.CORS_ANY_ORIGIN === 'true';
 
-    // altijd deze headers toestaan (voor preflight & SSE)
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers',
-      'authorization, content-type, x-requested-with');
-
-    if (req.method === 'OPTIONS') return res.sendStatus(204);
-    next();
-  };
+// helper to check origin safely
+function isAllowed(origin) {
+  if (!origin) return false;
+  if (ANY) return true;
+  try {
+    const u = new URL(origin);
+    const norm = `${u.protocol}//${u.host}`;
+    return allowed.has(norm);
+  } catch {
+    return false;
+  }
 }
 
-module.exports = { corsMiddleware };
+module.exports = function corsMiddleware(req, res, next) {
+  const origin = req.headers.origin;
+
+  if (origin && isAllowed(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin'); // so caches respect origin variance
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+
+  // What browsers may send on preflight
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'Authorization, Content-Type, X-Requested-With'
+  );
+  res.setHeader(
+    'Access-Control-Allow-Methods',
+    'GET, POST, PUT, PATCH, DELETE, OPTIONS'
+  );
+  res.setHeader('Access-Control-Max-Age', '600');
+
+  // Short-circuit all preflights BEFORE any auth/route
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+
+  next();
+};

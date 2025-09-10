@@ -1,11 +1,11 @@
-// Startpunt (CommonJS)
+// Start (CommonJS)
 const http = require('http');
 const app = require('./app');
 
 const PORT = process.env.PORT || 8080;
 const server = http.createServer(app);
 
-// (optioneel) ws-upgrade handler wordt in ./ws/deepgramBridge.js gehooked
+// Hook WS upgrade (Deepgram mic bridge)
 try {
   require('./ws/deepgramBridge').attach(server, app);
 } catch (e) {

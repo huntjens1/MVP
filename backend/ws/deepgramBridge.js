@@ -1,161 +1,104 @@
-const WebSocket = require("ws");
-const url = require("url");
+/**
+ * Minimal WS upgrade hook for mic streaming.
+ * - Attaches to Node http.Server
+ * - Accepts upgrades on path `/ws/mic`
+ * - Opens a WS to Deepgram and pipes frames back/forth
+ *
+ * Assumes you already mint a Deepgram URL + token on the server side.
+ * If you’re doing that elsewhere, adapt connectDeepgram() accordingly.
+ */
 
-const DG_WS = "wss://api.deepgram.com/v1/listen";
+const { WebSocketServer, WebSocket } = require('ws');
+const { URL } = require('url');
 
-// Alleen realtime-compatibele query params toestaan
-const PASS_KEYS = [
-  "model",
-  "language",
-  "encoding",      // linear16
-  "sample_rate",   // 16000
-  "smart_format",  // true
-  "interim_results",
-  "diarize",
-  // evt. veilig toevoegen: "keywords","search","filler_words","profanity_filter"
-];
+const PATH = '/ws/mic';
 
-function buildDGUrl(q) {
-  const u = new URL(DG_WS);
-
-  // mapping: 'codec' -> 'encoding'
-  if (q.codec && !q.encoding) u.searchParams.set("encoding", String(q.codec));
-  if (q.sample_rate) u.searchParams.set("sample_rate", String(q.sample_rate));
-
-  for (const k of PASS_KEYS) {
-    const v = q[k];
-    if (v !== undefined && v !== null && String(v).length) {
-      u.searchParams.set(k, String(v));
-    }
-  }
-
-  // Defaults afdwingen (nova-2, NL, 16k linear16)
-  if (!u.searchParams.get("model")) u.searchParams.set("model", "nova-2");
-  if (!u.searchParams.get("language")) u.searchParams.set("language", "nl");
-  if (!u.searchParams.get("encoding")) u.searchParams.set("encoding", "linear16");
-  if (!u.searchParams.get("sample_rate")) u.searchParams.set("sample_rate", "16000");
-  if (!u.searchParams.get("smart_format")) u.searchParams.set("smart_format", "true");
-  if (!u.searchParams.get("interim_results")) u.searchParams.set("interim_results", "true");
-
-  return u.toString();
+function assertEnv(name) {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing env ${name}`);
+  return v;
 }
 
-function setupMicWs(server, app, logger = console) {
-  const wss = new WebSocket.Server({ noServer: true });
-
-  server.on("upgrade", (req, socket, head) => {
-    const { pathname } = url.parse(req.url);
-    if (pathname !== "/ws/mic") return;
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      wss.emit("connection", ws, req);
-    });
+function deepgramUrl() {
+  // Streaming endpoint; tune query as needed (nova-2, interim, diarize, etc)
+  // Docs: https://developers.deepgram.com
+  const base = 'wss://api.deepgram.com/v1/listen';
+  const params = new URLSearchParams({
+    model: 'nova-2',
+    language: 'nl',
+    encoding: 'linear16',
+    sample_rate: '16000',
+    interim_results: 'true',
+    diarize: 'true',
+    smart_format: 'true',
+    punctuate: 'true'
   });
+  return `${base}?${params.toString()}`;
+}
 
-  wss.on("connection", (clientWs, req) => {
-    const parsed = url.parse(req.url, true);
-    const q = parsed.query || {};
-    const tenantId = req.headers["x-tenant-id"] || "unknown";
-    const rid = q.conversation_id || "rid-" + Math.random().toString(36).slice(2);
+function connectDeepgram() {
+  const url = deepgramUrl();
+  const headers = { Authorization: `Token ${assertEnv('DEEPGRAM_API_KEY')}` };
+  return new WebSocket(url, { headers });
+}
 
-    // 1) Auth: prefer server-side permanente key; anders fallback naar query token
-    const serverKey = process.env.DEEPGRAM_API_KEY && String(process.env.DEEPGRAM_API_KEY).trim();
-    const queryToken = q.token && String(q.token).trim();
-    const authToken = serverKey || queryToken;
+/**
+ * Create a dedicated WS server only for our path; keep Node’s HTTP server for Express.
+ */
+function attach(server /*, app */) {
+  const wss = new WebSocketServer({ noServer: true });
 
-    if (!authToken) {
-      logger.error(`[DG] rid=${rid} no_auth_token (set DEEPGRAM_API_KEY or pass token=)`);
-      try { clientWs.close(1008, "missing_auth"); } catch {}
-      return;
-    }
+  server.on('upgrade', (req, socket, head) => {
+    try {
+      const u = new URL(req.url, `http://${req.headers.host}`);
+      if (u.pathname !== PATH) return; // ignore other upgrade paths
 
-    const dgUrl = buildDGUrl(q);
-    logger.info(`[DG] open rid=${rid} tenant=${tenantId} auth=${serverKey ? "SERVER_KEY" : "EPHEMERAL"} url=${dgUrl}`);
+      // Optionally: auth check here (e.g., validate JWT from query/header)
+      // if (!isValid(req)) { socket.destroy(); return; }
 
-    const dgWs = new WebSocket(dgUrl, {
-      headers: {
-        Authorization: `Token ${authToken}`,
-        "User-Agent": "CallLogix/1.0",
-      },
-    });
-
-    // Log 4xx/5xx reden + body
-    dgWs.on("unexpected-response", (request, response) => {
-      let body = "";
-      response.on("data", (chunk) => (body += chunk.toString()));
-      response.on("end", () => {
-        logger.error(
-          `[DG400] rid=${rid} status=${response.statusCode} headers=${JSON.stringify(
-            response.headers
-          )} body=${body}`
-        );
-        try {
-          clientWs.send(JSON.stringify({
-            type: "error",
-            source: "deepgram_handshake",
-            status: response.statusCode,
-            body,
-          }));
-        } catch {}
-        try { clientWs.close(1011, "dg_unexpected_response"); } catch {}
+      wss.handleUpgrade(req, socket, head, (client) => {
+        wss.emit('connection', client, req);
       });
-    });
-
-    let dgOpen = false;
-    const queue = [];
-    let closed = false;
-
-    const safeClose = (code = 1000, reason = "") => {
-      if (closed) return;
-      closed = true;
-      try { clientWs.close(code, reason); } catch {}
-      try { dgWs.close(code, reason); } catch {}
-    };
-
-    dgWs.on("open", () => {
-      dgOpen = true;
-      logger.info(`[DG] connected rid=${rid}`);
-      for (const part of queue) { try { dgWs.send(part); } catch {} }
-      queue.length = 0;
-    });
-
-    dgWs.on("message", (data) => {
-      try { clientWs.send(data); } catch {}
-    });
-
-    dgWs.on("error", (err) => {
-      logger.error(`[DG] error rid=${rid} ${err?.message || err}`);
-      try {
-        clientWs.send(JSON.stringify({ type: "error", source: "deepgram", message: String(err?.message || err) }));
-      } catch {}
-    });
-
-    dgWs.on("close", (code, reason) => {
-      logger.warn(`[DG] closed rid=${rid} code=${code} reason=${reason}`);
-      safeClose(code, reason);
-    });
-
-    clientWs.on("message", (data) => {
-      if (!dgOpen) queue.push(data);
-      else { try { dgWs.send(data); } catch {} }
-    });
-
-    clientWs.on("error", (err) => {
-      logger.error(`[WS] client error rid=${rid} ${err?.message || err}`);
-      safeClose(1011, "client_err");
-    });
-
-    clientWs.on("close", (code, reason) => {
-      logger.info(`[WS] client closed rid=${rid} code=${code} reason=${reason}`);
-      safeClose(code, reason);
-    });
-
-    const ka = setInterval(() => { try { dgWs.ping(); } catch {} }, 15000);
-    clientWs.on("close", () => clearInterval(ka));
-    dgWs.on("close", () => clearInterval(ka));
+    } catch (e) {
+      socket.destroy();
+    }
   });
 
-  logger.info("[DG] bridge mounted at /ws/mic");
+  wss.on('connection', (client /*, req */) => {
+    const dg = connectDeepgram();
+
+    dg.on('open', () => {
+      client.send(JSON.stringify({ type: 'deepgram_open' }));
+    });
+
+    dg.on('message', (msg) => {
+      // Forward transcription events to the browser
+      try {
+        client.send(msg);
+      } catch (_) {}
+    });
+
+    dg.on('close', () => {
+      try { client.close(1000, 'deepgram_closed'); } catch (_) {}
+    });
+
+    dg.on('error', (err) => {
+      try { client.close(1011, `deepgram_error:${err.message}`); } catch (_) {}
+    });
+
+    // From browser to Deepgram (PCM16 frames)
+    client.on('message', (data, isBinary) => {
+      if (dg.readyState === WebSocket.OPEN) {
+        dg.send(data, { binary: isBinary });
+      }
+    });
+
+    client.on('close', () => {
+      try { dg.close(); } catch (_) {}
+    });
+  });
+
+  console.log(`[ws] Deepgram mic bridge attached on ${PATH}`);
 }
 
-module.exports = setupMicWs;
-module.exports.setupMicWs = setupMicWs;
+module.exports = { attach };
