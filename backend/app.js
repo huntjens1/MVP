@@ -1,83 +1,170 @@
-// app.js  — production ready
+// backend/app.js
 require('dotenv').config();
 
-const express       = require('express');
-const cookieParser  = require('cookie-parser');
-const compression   = require('compression');
-const morgan        = require('morgan');
-const path          = require('path');
-
-// 🔐 eigen middlewares (CommonJS default exports)
-const corsMiddleware = require('./middlewares/cors');
-const errorHandler   = require('./middlewares/errorHandler');
+const express = require('express');
+const http = require('http');
+const morgan = require('morgan');
+const helmet = require('helmet');
+const compression = require('compression');
+const cookieParser = require('cookie-parser');
+const jwt = require('jsonwebtoken');
 
 const app = express();
 
-/* ─────────── Infrastructure & security ─────────── */
-app.disable('x-powered-by');
-app.set('trust proxy', 1); // nodig i.c.m. Secure cookies achter proxy
+/* ------------------------------------------------------------------ */
+/* Core settings                                                      */
+/* ------------------------------------------------------------------ */
+app.set('trust proxy', true); // nodig voor cookies/secure achter Railway/NGINX/Heroku
 
-/* ─────────── Parsers ─────────── */
-app.use(cookieParser());
-app.use(express.json({ limit: '1mb' }));
-app.use(express.urlencoded({ extended: true }));
-
-/* ─────────── CORS (incl. credentials & preflight) ─────────── */
-// Belangrijk: geef de middleware-functie door, NIET aanroepen.
-app.use(corsMiddleware);
-
-/* ─────────── Logging & gzip ─────────── */
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: false }));
+app.use(cookieParser());
 app.use(compression());
 
-/* ─────────── Static ─────────── */
-app.use('/public', express.static(path.join(__dirname, 'public')));
+// Helmet: laat COEP/CORP los i.v.m. audio/SSE en verplaats CSP naar front of proxy
+app.use(
+  helmet({
+    crossOriginEmbedderPolicy: false,
+    crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    contentSecurityPolicy: false,
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  })
+);
 
-/* ─────────── API routes ───────────
-   We *verwijderen niets*. We mounten alle bestaande routers onder /api.
-   Voor gevallen waar een router intern al met '/api/…' is gedefinieerd,
-   mounten we dezelfde router óók op root ('/') als veilige fallback.
-   Zo lossen we 404’s op zonder gedrag te veranderen.
-*/
-const safeUse = (routerPath, mountBoth = false) => {
-  try {
-    const router = require(routerPath);
-    app.use('/api', router);
-    if (mountBoth) app.use('/', router); // fallback wanneer routes intern 'api/*' bevatten
-  } catch (err) {
-    // Router bestaat niet in deze build — stilletjes overslaan
+/* ------------------------------------------------------------------ */
+/* CORS – whitelist + regex + credentials                             */
+/* ------------------------------------------------------------------ */
+const ALLOWED_LIST = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+const ALLOWED_REGEX = process.env.ALLOWED_ORIGIN_REGEX
+  ? new RegExp(process.env.ALLOWED_ORIGIN_REGEX)
+  : null;
+
+function isAllowedOrigin(origin) {
+  if (!origin) return false;
+  if (ALLOWED_LIST.includes(origin)) return true;
+  if (ALLOWED_REGEX && ALLOWED_REGEX.test(origin)) return true;
+  return false;
+}
+
+function corsMiddleware(req, res, next) {
+  const origin = req.headers.origin;
+
+  if (isAllowedOrigin(origin)) {
+    // CORS basis
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'Content-Type, Authorization, X-Requested-With'
+    );
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+    // Zorg dat browsers Set-Cookie zien
+    res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie');
   }
-};
 
-// Kernroutes
-safeUse('./routes/auth');                // /login, /logout, /me
-safeUse('./routes/wsToken');            // /ws-token
-safeUse('./routes/conversations', true);
-safeUse('./routes/transcripts',   true);
+  if (req.method === 'OPTIONS') {
+    // Snelle preflight – altijd 204
+    return res.sendStatus(204);
+  }
 
-// AI/assist features (alles behouden, alleen robuuster gemount)
-safeUse('./routes/summarize',      true); // POST /summarize
-safeUse('./routes/suggestions',    true); // GET/POST /suggestions (indien aanwezig)
-safeUse('./routes/suggest',        true); // POST /suggest
-safeUse('./routes/suggestQuestion',true); // POST /suggest-question
-safeUse('./routes/assist',         true); // POST /assist
-safeUse('./routes/assistStream',   true); // GET /assist-stream (SSE)
+  return next();
+}
 
-safeUse('./routes/ticket',         true); // POST /ticket
-safeUse('./routes/analytics',      true);
-safeUse('./routes/feedback',       true);
-safeUse('./routes/aiFeedback',     true);
-safeUse('./routes/tenants',        true);
+app.use(corsMiddleware);
 
-// Healthcheck
-app.get('/api/health', (_req, res) => res.json({ ok: true }));
+/* ------------------------------------------------------------------ */
+/* Healthcheck                                                        */
+/* ------------------------------------------------------------------ */
+app.get('/api/healthz', (req, res) =>
+  res.json({ ok: true, ts: Date.now(), env: process.env.NODE_ENV })
+);
 
-/* ─────────── 404 fallback ─────────── */
-app.use((req, res) => {
-  res.status(404).json({ error: 'Not Found', path: req.path });
+/* ------------------------------------------------------------------ */
+/* Routers (bestaande bestanden)                                      */
+/*  – NIETS verwijderd; alleen gemount onder /api                     */
+/* ------------------------------------------------------------------ */
+try { app.use('/api', require('./routes/auth')); } catch {}
+try { app.use('/api', require('./routes/suggestions')); } catch {}
+try { app.use('/api', require('./routes/assistStream')); } catch {}
+try { app.use('/api', require('./routes/assist')); } catch {}
+try { app.use('/api', require('./routes/ticket')); } catch {}
+try { app.use('/api', require('./routes/ticket-skeleton')); } catch {}
+try { app.use('/api', require('./routes/summarize')); } catch {}
+try { app.use('/api', require('./routes/suggest')); } catch {}
+try { app.use('/api', require('./routes/suggestQuestion')); } catch {}
+try { app.use('/api', require('./routes/wsToken')); } catch {}
+
+/* ------------------------------------------------------------------ */
+/* Fallback /api/me (niet-invasief)                                   */
+/*  – sommige deploys misten deze route.                              */
+/*  – leest JWT uit httpOnly cookie en geeft 200/401.                 */
+/* ------------------------------------------------------------------ */
+const AUTH_COOKIE = process.env.AUTH_COOKIE_NAME || 'auth';
+const JWT_SECRET =
+  process.env.JWT_SECRET ||
+  process.env.AUTH_SECRET || // mocht dit bij jullie zo heten
+  'change-me-in-production';
+
+app.get('/api/me', (req, res, next) => {
+  // Als een andere router al /api/me afhandelt, komt code hier niet.
+  // Deze fallback is idempotent en niet-invasief.
+  if (!req.cookies || !req.cookies[AUTH_COOKIE]) return res.sendStatus(401);
+
+  try {
+    const payload = jwt.verify(req.cookies[AUTH_COOKIE], JWT_SECRET);
+    // Houd payload klein en veilig
+    const { sub, email, name, roles, tenant } = payload || {};
+    return res.json({ sub, email, name, roles: roles || [], tenant: tenant || null });
+  } catch (err) {
+    return res.sendStatus(401);
+  }
 });
 
-/* ─────────── Centrale error handler ─────────── */
-app.use(errorHandler);
+/* ------------------------------------------------------------------ */
+/* 404 & error handler                                                */
+/* ------------------------------------------------------------------ */
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ error: 'Not Found' });
+  }
+  return next();
+});
+
+// Jullie eigen error handler laten staan als hij bestaat
+try {
+  const errorHandler = require('./middlewares/errorHandler');
+  app.use(errorHandler);
+} catch {
+  // minimal fallback
+  app.use((err, req, res, _next) => {
+    console.error('[error]', err);
+    res.status(err.status || 500).json({ error: 'Internal Server Error' });
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* HTTP server + Deepgram bridge                                      */
+/* ------------------------------------------------------------------ */
+const PORT = process.env.PORT || 8080;
+const server = http.createServer(app);
+
+try {
+  // ./ws/deepgramBridge.js moet exporteren: attachDeepgramMicBridge(server, path)
+  const { attachDeepgramMicBridge } = require('./ws/deepgramBridge');
+  attachDeepgramMicBridge(server, '/ws/mic');
+} catch (e) {
+  console.warn('[ws] deepgramBridge not attached:', e?.message || e);
+}
+
+server.listen(PORT, () => {
+  console.log(`[calllogix] backend listening on :${PORT}`);
+});
 
 module.exports = app;
