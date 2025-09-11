@@ -1,65 +1,96 @@
-// CORS middleware – production safe, met duidelijke logging
-const { URL } = require('url');
+// backend/middlewares/cors.js
+// Hardened CORS middleware with allowlist + regex + proper preflight handling.
+const DEFAULT_ALLOW_LIST = [
+  'https://mvp-zeta-rose.vercel.app',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+];
 
-const parseOrigins = (csv = '') =>
-  csv.split(',').map(s => s.trim()).filter(Boolean);
+// Covers preview deployments like https://mvp-zeta-rose-xyz123.vercel.app
+const DEFAULT_REGEX = /^https:\/\/mvp-zeta-rose(?:-[a-z0-9-]+)?\.vercel\.app$/i;
 
-// Zet in Railway: FRONTEND_URLS=https://mvp-zeta-rose.vercel.app
-// Optioneel voor test: CORS_ANY_ORIGIN=true
-const ANY = String(process.env.CORS_ANY_ORIGIN).toLowerCase() === 'true';
-const allowedSet = new Set(parseOrigins(process.env.FRONTEND_URLS));
-
-// Normaliseer tot "protocol//host" (zonder pad of trailing slash)
-function normalizeOriginString(s) {
+function parseRegexFromEnv() {
+  const raw = process.env.ALLOWED_ORIGIN_REGEX;
+  if (!raw) return null;
   try {
-    const u = new URL(s);
-    return `${u.protocol}//${u.host}`;
-  } catch {
-    return '';
+    // Allow both "pattern" and "/pattern/flags" styles
+    const m = raw.match(/^\/(.+)\/([imuygs]*)$/);
+    return new RegExp(m ? m[1] : raw, m ? m[2] : 'i');
+  } catch (e) {
+    console.warn('[cors] Invalid ALLOWED_ORIGIN_REGEX:', raw, e.message);
+    return null;
   }
 }
 
-function isAllowed(origin) {
+const allowList = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+if (allowList.length === 0) {
+  // Safe defaults so deployments blijven werken als envs ontbreken.
+  allowList.push(...DEFAULT_ALLOW_LIST);
+}
+
+const allowRegex = parseRegexFromEnv() || DEFAULT_REGEX;
+const anyOrigin = String(process.env.ANY_ORIGIN || '').toLowerCase() === 'true';
+
+function isAllowedOrigin(origin) {
   if (!origin) return false;
-  if (ANY) return true;
-  const norm = normalizeOriginString(origin);
-  return allowedSet.has(norm);
+  if (anyOrigin) return true;
+  if (allowList.includes(origin)) return true;
+  try {
+    return allowRegex.test(origin);
+  } catch {
+    return false;
+  }
+}
+
+function setCorsHeaders(res, origin) {
+  res.setHeader('Vary', 'Origin');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+  res.setHeader('Access-Control-Max-Age', '600');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Length,Content-Type');
+  if (origin) res.setHeader('Access-Control-Allow-Origin', origin);
 }
 
 function corsMiddleware(req, res, next) {
-  const origin = req.headers.origin;
-  const ok = isAllowed(origin);
+  const origin = req.headers.origin || '';
+  const ok = isAllowedOrigin(origin);
 
-  // Log 1 regel per request (handig om in Railway te zien wat er mis is)
-  if (process.env.NODE_ENV !== 'test') {
-    console.log(`[cors] ${req.method} ${req.originalUrl} origin=${origin || '-'} allowed=${ok} any=${ANY} env=${[...allowedSet].join(',') || '-'}`);
+  if (process.env.DEBUG_CORS) {
+    console.log(
+      '[cors]',
+      req.method,
+      req.path,
+      'origin=',
+      origin || '(none)',
+      'ok=',
+      ok,
+      'list=',
+      allowList,
+      'regex=',
+      String(allowRegex),
+      'any=',
+      anyOrigin
+    );
   }
 
-  if (ok) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Vary', 'Origin');
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  // Geen origin? Gewoon door.
+  if (!origin) return next();
+
+  if (!ok) {
+    // Preflight of echte call wordt hier bewust geblokkeerd
+    if (req.method === 'OPTIONS') return res.status(403).end();
+    return res.status(403).json({ error: 'CORS_ORIGIN_FORBIDDEN', origin });
   }
 
-  // Voeg hier ALLE headers toe die je frontend stuurt (bijv. X-Tenant-Id)
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'Authorization, Content-Type, X-Requested-With'
-  );
-  res.setHeader(
-    'Access-Control-Allow-Methods',
-    'GET, POST, PUT, PATCH, DELETE, OPTIONS'
-  );
-  res.setHeader('Access-Control-Max-Age', '600');
+  setCorsHeaders(res, origin);
 
-  // Behandel preflight snel
-  if (req.method === 'OPTIONS') {
-    // Als origin niet toegestaan is, antwoordt de server zonder ACAO
-    // en zal de browser ’m blokkeren — dat is oké.
-    return res.status(204).end();
-  }
-
-  next();
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  return next();
 }
 
 module.exports = corsMiddleware;
