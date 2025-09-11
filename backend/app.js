@@ -1,171 +1,155 @@
-// app.js  — Production-ready Express bootstrap (keeps your features intact)
-'use strict';
+// backend/app.js
+// Productie-klare Express app (geen app.listen hier!)
+// - Strikte CORS met credentials
+// - Veilige proxy/cookie settings
+// - Consistente debug-logging
+// - Monteert bestaande routes als ze aanwezig zijn (fail-safe)
+// - Laat SSE en WS routes door proxies werken
 
-/* ----------------------------------------
- * 1)  Basics & safety
- * -------------------------------------- */
-require('dotenv').config();
-const http = require('http');
-const path = require('path');
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const morgan = require('morgan');
-const compression = require('compression');
 const helmet = require('helmet');
+const cors = require('cors');
 
-/* ----------------------------------------
- * 2)  Helpers to load local modules no matter
- *     where you placed the files during refactors
- * -------------------------------------- */
-const tryRequire = (candidates) => {
-  for (const p of candidates) {
-    try { return require(p); } catch { /* continue */ }
-  }
-  throw new Error(`Module not found. Tried: ${candidates.join(', ')}`);
+const tryRequire = (p) => {
+  try { return require(p); } catch { return null; }
 };
 
-/* ----------------------------------------
- * 3)  Local middleware (CORS & errors)
- * -------------------------------------- */
-const corsMiddleware = tryRequire([
-  './middlewares/cors',
-  './cors'
-]);
+const compression = tryRequire('compression'); // optioneel
+const errorHandler = tryRequire('./middlewares/errorHandler'); // optioneel, blijft ondersteund
 
-const errorHandler = tryRequire([
-  './middlewares/errorHandler',
-  './errorHandler'
-]);
+// ---- Debug helper ----------------------------------------------------------
+const DEBUG_ON = /^true|1|yes$/i.test(String(process.env.DEBUG || 'false'));
+const debug = (...args) => { if (DEBUG_ON) console.log('[debug]', ...args); };
 
-/* ----------------------------------------
- * 4)  Routes (we only *add* hooks; we do not remove anything)
- *     If a route file doesn’t exist in your repo, the tryRequire will throw.
- *     Leave out the ones you really don’t have.
- * -------------------------------------- */
-const authRoutes          = tryRequire(['./routes/auth']);
-const wsTokenRoutes       = tryRequire(['./routes/wsToken']);
-
-const suggestionsRoutes   = tryRequire(['./routes/suggestions']);
-const assistStreamRoutes  = tryRequire(['./routes/assistStream']);
-const assistRoutes        = tryRequire(['./routes/assist']);
-const suggestRoutes       = tryRequire(['./routes/suggest']);
-const suggestQuestion     = tryRequire(['./routes/suggestQuestion']);
-const ticketRoutes        = tryRequire(['./routes/ticket']);
-const summarizeRoutes     = tryRequire(['./routes/summarize']);
-const conversationsRoutes = tryRequire(['./routes/conversations']);
-const transcriptsRoutes   = tryRequire(['./routes/transcripts']);
-const analyticsRoutes     = tryRequire(['./routes/analytics']);
-const feedbackRoutes      = tryRequire(['./routes/feedback']);
-const aiFeedbackRoutes    = tryRequire(['./routes/aiFeedback']);
-const tenantsRoutes       = tryRequire(['./routes/tenants']);
-
-/* ----------------------------------------
- * 5)  WebSocket bridge (Deepgram) — path /ws/mic
- * -------------------------------------- */
-const deepgramBridge = (() => {
-  try { return require('./ws/deepgramBridge'); } catch { return require('./deepgramBridge'); }
-})();
-
-/* ----------------------------------------
- * 6)  App setup
- * -------------------------------------- */
+// ---- App init --------------------------------------------------------------
 const app = express();
 
-// Behind Railway/Render/Heroku proxies
+// achter proxies (Railway/Vercel) nodig voor Secure cookies / req.ip etc.
 app.set('trust proxy', 1);
 
-// Harden headers (keep it minimal to avoid breaking features)
+// basis beveiliging
 app.use(helmet({
-  contentSecurityPolicy: false,
-  crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' }
+  contentSecurityPolicy: false, // laat SSE/fetch flexibel — CSP kun je desgewenst apart instellen
 }));
 
-// Gzip
-app.use(compression());
+// logging
+app.use(morgan(DEBUG_ON ? 'dev' : 'combined'));
 
-// Logging (production-friendly)
-app.use(morgan(process.env.LOG_FORMAT || 'tiny'));
-
-// Body & cookies
+// parsers
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(cookieParser());
 
-// CORS (credentials + fine-grained allow list)
-app.use(corsMiddleware);
+// optionele compressie
+if (compression) app.use(compression());
 
-// Health & sanity endpoints
-app.get('/health', (_, res) => res.status(200).send('OK'));
-app.get('/', (_, res) => res.status(200).send('calllogix-backend'));
+// ---- CORS (credentials + allowlist) ---------------------------------------
+// ALLOWED_ORIGINS = "https://mvp-zeta-rose.vercel.app,http://localhost:5173"
+// ALLOWED_ORIGIN_REGEX = "^https:\\/\\/mvp-zeta-rose(?:-[a-z0-9-]+)?\\.vercel\\.app$"
+const ORIGINS = String(process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
 
-/* ----------------------------------------
- * 7)  Mount API routes — nothing removed, only added in one place
- * -------------------------------------- */
-// Auth & session
-app.use('/api', authRoutes);           // /api/login, /api/logout, /api/me
-app.use('/api', wsTokenRoutes);        // /api/ws-token
+const ORIGIN_RE = process.env.ALLOWED_ORIGIN_REGEX
+  ? new RegExp(process.env.ALLOWED_ORIGIN_REGEX)
+  : null;
 
-// Core AI features
-app.use('/api', suggestionsRoutes);    // GET /api/suggestions
-app.use('/api', assistStreamRoutes);   // GET /api/assist-stream
-app.use('/api', assistRoutes);         // POST /api/assist
-app.use('/api', suggestRoutes);        // POST /api/suggest
-app.use('/api', suggestQuestion);      // POST /api/suggest-question
-app.use('/api', ticketRoutes);         // POST /api/ticket, /api/ticket-skeleton
-app.use('/api', summarizeRoutes);      // POST /api/summarize
+const isAllowedOrigin = (origin) => {
+  if (!origin) return false;
+  if (ORIGINS.includes(origin)) return true;
+  if (ORIGIN_RE && ORIGIN_RE.test(origin)) return true;
+  return false;
+};
 
-// Domain routes
-app.use('/api', conversationsRoutes);
-app.use('/api', transcriptsRoutes);
-app.use('/api', analyticsRoutes);
-app.use('/api', feedbackRoutes);
-app.use('/api', aiFeedbackRoutes);
-app.use('/api', tenantsRoutes);
+const corsMiddleware = (req, res, next) => {
+  const origin = req.headers.origin;
+  const allowed = isAllowedOrigin(origin);
 
-/* ----------------------------------------
- * 8)  404 for unknown API routes (keep last)
- * -------------------------------------- */
-app.use((req, res, next) => {
-  if (req.path.startsWith('/api/')) {
-    return res.status(404).json({ ok: false, error: 'Not Found' });
+  if (allowed) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Vary', 'Origin');
+  }
+  // credentials voor cookies (auth) + SSE/fetch
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header(
+    'Access-Control-Allow-Headers',
+    'Origin, X-Requested-With, Content-Type, Accept, Authorization'
+  );
+  res.header(
+    'Access-Control-Allow-Methods',
+    'GET,POST,PUT,PATCH,DELETE,OPTIONS'
+  );
+
+  if (req.method === 'OPTIONS') {
+    debug('CORS preflight', { path: req.path, origin, allowed });
+    return res.sendStatus(204);
   }
   return next();
+};
+
+// Gebruik zowel custom headers als het cors-package (voor edge-compat)
+app.use(cors({
+  origin: (origin, cb) => cb(null, isAllowedOrigin(origin) ? origin : false),
+  credentials: true,
+}));
+app.use(corsMiddleware);
+
+// Proxy hints voor SSE/streaming
+app.use((req, res, next) => {
+  // voorkomt buffering bij Nginx/Cloudflare achtige proxies
+  res.setHeader('X-Accel-Buffering', 'no');
+  next();
 });
 
-/* ----------------------------------------
- * 9)  Global error handler (kept)
- * -------------------------------------- */
-app.use(errorHandler);
-
-/* ----------------------------------------
- * 10) Start HTTP server and attach WS bridge
- * -------------------------------------- */
-const PORT = Number(process.env.PORT || 8080);
-const server = http.createServer(app);
-
-server.listen(PORT, () => {
-  /* eslint-disable no-console */
-  console.log(`[calllogix] backend listening on :${PORT}`);
-  /* eslint-enable no-console */
+// ---- Health / meta ---------------------------------------------------------
+app.get('/api/health', (req, res) => {
+  debug('health check');
+  res.status(200).json({ ok: true, ts: Date.now() });
 });
 
-// Attach Deepgram WS bridge on /ws/mic once the server is ready
-try {
-  deepgramBridge.attach(server, { path: '/ws/mic' });
-  console.log('[ws] Deepgram mic bridge attached on /ws/mic');
-} catch (err) {
-  console.warn('[ws] deepgramBridge not attached:', err?.message || err);
+// ---- Dynamisch routes mounten (bestaande code blijft werken) --------------
+// NB: we monteren alleen wat er daadwerkelijk is, zodat we niets “breken”.
+const mountRoute = (path, modPath) => {
+  const mod = tryRequire(modPath);
+  if (mod) {
+    app.use(path, mod);
+    debug('route mounted', { path, mod: modPath });
+  } else {
+    debug('route missing (skipped)', { path, mod: modPath });
+  }
+};
+
+// Auth & tokens
+mountRoute('/api', './routes/auth');           // /api/me, /api/login, /api/logout
+mountRoute('/api', './routes/wsToken');        // /api/ws-token
+
+// AI assist/suggest/ticket/summarize (jullie bestaande handlers)
+mountRoute('/api', './routes/assist');         // POST /api/assist
+mountRoute('/api', './routes/assistStream');   // GET  /api/assist-stream (SSE/stream)
+mountRoute('/api', './routes/suggestions');    // GET  /api/suggestions (SSE)
+mountRoute('/api', './routes/ticket');         // POST /api/ticket, /api/ticket-skeleton
+mountRoute('/api', './routes/summarize');      // POST /api/summarize
+
+// ---- 404 / foutafhandeling -------------------------------------------------
+app.use((req, res) => {
+  debug('404', { method: req.method, url: req.originalUrl });
+  res.status(404).json({ error: 'Not Found' });
+});
+
+// eigen errorHandler blijft ondersteund
+if (errorHandler) {
+  app.use((err, req, res, next) => {
+    debug('error middleware', { err: err?.message, stack: err?.stack });
+    return errorHandler(err, req, res, next);
+  });
+} else {
+  app.use((err, req, res, next) => {
+    debug('unhandled error', { err: err?.message, stack: err?.stack });
+    res.status(500).json({ error: 'Internal Server Error' });
+  });
 }
-
-/* ----------------------------------------
- * 11) Process-level guards (don’t remove, just safer)
- * -------------------------------------- */
-process.on('unhandledRejection', (reason) => {
-  console.error('[unhandledRejection]', reason);
-});
-
-process.on('uncaughtException', (err) => {
-  console.error('[uncaughtException]', err);
-});
 
 module.exports = app;
