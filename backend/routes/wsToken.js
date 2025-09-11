@@ -1,24 +1,48 @@
 // backend/routes/wsToken.js
 const express = require('express');
-const { randomUUID } = require('crypto');
+const jwt = require('jsonwebtoken');
 
 const router = express.Router();
 
-/**
- * POST /api/ws-token
- * Geeft een korte-lived identificator terug die de frontend kan gebruiken
- * om een microfoon/WS sessie te initialiseren.
- * Vorm: { wsToken: "<uuid>" }
- */
-router.post('/ws-token', async (req, res) => {
+const DEBUG_ON = /^true|1|yes$/i.test(String(process.env.DEBUG || 'false'));
+const debug = (...a) => { if (DEBUG_ON) console.log('[ws-token]', ...a); };
+
+const JWT_SECRET = process.env.JWT_SECRET || process.env.AUTH_SECRET || 'change-me';
+
+// optioneel: korte TTL voor WS tokens
+const WS_TOKEN_TTL_SEC = Number(process.env.WS_TOKEN_TTL_SEC || 600);
+
+function verifyAuth(req) {
   try {
-    const wsToken = randomUUID(); // Node 20, geen extra deps nodig
-    // Eventueel: hier je eigen registratie/tenant logging doen.
-    return res.status(200).json({ wsToken });
-  } catch (err) {
-    console.error('[ws-token] error:', err);
-    return res.status(500).json({ error: 'WS_TOKEN_FAILED' });
+    const cookieToken = req.cookies?.auth;
+    const hdr = req.headers['authorization'];
+    const hdrToken = hdr && hdr.startsWith('Bearer ') ? hdr.slice(7) : null;
+    const token = cookieToken || hdrToken;
+    if (!token) return null;
+    return jwt.verify(token, JWT_SECRET);
+  } catch (e) {
+    debug('auth verify failed:', e?.message);
+    return null;
   }
+}
+
+router.post('/ws-token', (req, res) => {
+  const user = verifyAuth(req);
+  if (!user) {
+    debug('unauthorized');
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const claims = {
+    sub: user.sub || user.id || 'user',
+    typ: 'ws',
+  };
+
+  const token = jwt.sign(claims, JWT_SECRET, { expiresIn: WS_TOKEN_TTL_SEC });
+  debug('issued', { sub: claims.sub, expSec: WS_TOKEN_TTL_SEC });
+
+  // 🔴 Belangrijk: frontend verwacht "token"
+  return res.status(200).json({ token });
 });
 
 module.exports = router;
