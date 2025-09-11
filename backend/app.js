@@ -4,6 +4,7 @@ const cookieParser = require('cookie-parser');
 const compression = require('compression');
 const morgan = require('morgan');
 const path = require('path');
+const wsTokenRoutes = require('./routes/wsToken');
 
 // Middlewares (CommonJS default exports)
 const corsMiddleware = require('./middlewares/cors');
