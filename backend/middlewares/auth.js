@@ -1,29 +1,21 @@
+// backend/middlewares/auth.js
 const jwt = require('jsonwebtoken');
+const cookie = require('cookie');
 
-function requireAuth(req, res, next) {
+module.exports = function auth(req, res, next) {
   try {
-    let token = req.cookies?.auth;
+    const raw = req.headers.cookie || '';
+    const cookies = cookie.parse(raw);
+    const token = cookies.auth;
 
     if (!token) {
-      const h = (req.get('authorization') || '').trim();
-      if (h.toLowerCase().startsWith('bearer ')) token = h.slice(7).trim();
+      return res.status(401).json({ error: 'UNAUTHENTICATED' });
     }
-    if (!token && typeof req.query?.token === 'string') token = req.query.token;
 
-    if (!token) return res.status(401).json({ error: 'Unauthorized' });
-
-    const payload = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
-    req.user = {
-      id: payload.uid,
-      email: payload.email,
-      name: payload.name,
-      tenant_id: payload.tenant_id,
-      role: payload.role || 'agent',
-    };
-    next();
-  } catch {
-    return res.status(401).json({ error: 'Unauthorized' });
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = { id: payload.sub, email: payload.email, name: payload.name || payload.email };
+    return next();
+  } catch (err) {
+    return res.status(401).json({ error: 'INVALID_TOKEN' });
   }
-}
-
-module.exports = { requireAuth };
+};

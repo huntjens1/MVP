@@ -1,48 +1,54 @@
+// backend/routes/auth.js
 const express = require('express');
 const jwt = require('jsonwebtoken');
-const { requireAuth } = require('../middlewares/auth');
 
 const router = express.Router();
 
-router.post('/login', (req, res) => {
-  const { email, name } = req.body || {};
-  if (!email) return res.status(400).json({ error: 'email is required' });
+// MVP: replace with your real user lookup later (e.g., DB)
+async function validate(email, password) {
+  // simple MVP rule: accept the configured DEMO credentials or any non-empty
+  const demoUser = (process.env.DEMO_USER || '').toLowerCase();
+  const demoPass = process.env.DEMO_PASS || '';
 
-  const payload = {
-    uid: email.toLowerCase(),
-    email: email.toLowerCase(),
-    name: name || email.split('@')[0],
-    tenant_id: process.env.DEFAULT_TENANT_ID || 'default',
-    role: 'agent',
-  };
+  if (demoUser && demoPass) {
+    return email.toLowerCase() === demoUser && password === demoPass;
+  }
+  return Boolean(email && password);
+}
 
-  const token = jwt.sign(payload, process.env.JWT_SECRET, {
-    algorithm: 'HS256',
-    expiresIn: '12h',
-  });
+router.post('/login', async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+    if (!email || !password) {
+      return res.status(400).json({ success: false, error: 'MISSING_CREDENTIALS' });
+    }
 
-  const secure = (process.env.COOKIE_SECURE || 'true') === 'true';
-  res.cookie('auth', token, {
-    httpOnly: true,
-    secure,
-    sameSite: secure ? 'none' : 'lax',
-    maxAge: 12 * 60 * 60 * 1000,
-  });
+    const ok = await validate(email, password);
+    if (!ok) {
+      return res.status(401).json({ success: false, error: 'INVALID_CREDENTIALS' });
+    }
 
-  res.json({ ok: true });
-});
+    const user = { id: email.toLowerCase(), email: email.toLowerCase() };
 
-router.get('/me', requireAuth, (req, res) => {
-  res.json({ user: req.user });
-});
+    const token = jwt.sign(
+      { sub: user.id, email: user.email },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
 
-router.post('/logout', (req, res) => {
-  res.clearCookie('auth', {
-    httpOnly: true,
-    secure: (process.env.COOKIE_SECURE || 'true') === 'true',
-    sameSite: (process.env.COOKIE_SECURE || 'true') === 'true' ? 'none' : 'lax',
-  });
-  res.json({ ok: true });
+    // Set cookie for cross-site use from Vercel → Railway
+    res.cookie('auth', token, {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'none',
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    return res.status(200).json({ success: true, user });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'LOGIN_ERROR' });
+  }
 });
 
 module.exports = router;
