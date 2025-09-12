@@ -256,10 +256,10 @@ export default function CallLogixTranscriptie() {
         lastActivityRef.current = Date.now();
       } catch {
         try {
-          ws.close();
-        } catch {
-          /* ignore */
-        }
+          wsRef.current?.close(1000, 'user_stop');
+      } catch {
+        /* ignore */
+      }
       }
     };
     wsRef.current = ws;
