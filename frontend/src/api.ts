@@ -29,7 +29,6 @@ export type TicketOverrides = Partial<
 const BASE = (import.meta.env.VITE_API_BASE_URL as string) ?? "";
 
 function buildUrl(path: string, params?: Record<string, any>) {
-  // path mag '/api/...' of 'api/...' zijn, of een absolute http(s) URL
   const isAbs = /^https?:\/\//i.test(path);
   const base = isAbs ? "" : BASE.replace(/\/+$/, "");
   const p = isAbs ? path : `${base}${path.startsWith("/") ? "" : "/"}${path}`;
@@ -43,13 +42,13 @@ function buildUrl(path: string, params?: Record<string, any>) {
   return url.toString();
 }
 
-async function asJson<T>(res: Response): Promise<T> {
+async function asJson<T = any>(res: Response): Promise<T> {
   const text = await res.text();
   if (!text) return {} as T;
   try { return JSON.parse(text) as T; } catch { return {} as T; }
 }
 
-async function request<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
+async function request<T = any>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const res = await fetch(input, {
     credentials: "include",
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
@@ -63,20 +62,20 @@ async function request<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   return (await asJson<T>(res)) as T;
 }
 
-// -------- Generieke HTTP helpers (quick wins voor admin/analytics/etc.) --------
-export async function get<T>(path: string, params?: Record<string, any>) {
+// -------- Generieke HTTP helpers (default T = any om TS2339 te voorkomen) --------
+export async function get<T = any>(path: string, params?: Record<string, any>) {
   return await request<T>(buildUrl(path, params));
 }
-export async function post<T>(path: string, body?: any) {
+export async function post<T = any>(path: string, body?: any) {
   return await request<T>(buildUrl(path), { method: "POST", body: body ? JSON.stringify(body) : undefined });
 }
-export async function patch<T>(path: string, body?: any) {
+export async function patch<T = any>(path: string, body?: any) {
   return await request<T>(buildUrl(path), { method: "PATCH", body: body ? JSON.stringify(body) : undefined });
 }
-export async function put<T>(path: string, body?: any) {
+export async function put<T = any>(path: string, body?: any) {
   return await request<T>(buildUrl(path), { method: "PUT", body: body ? JSON.stringify(body) : undefined });
 }
-export async function del<T>(path: string, params?: Record<string, any>) {
+export async function del<T = any>(path: string, params?: Record<string, any>) {
   return await request<T>(buildUrl(path, params), { method: "DELETE" });
 }
 
@@ -135,21 +134,19 @@ async function ticketSkeleton(conversation_id: string, transcript: string, overr
 
 // -------- Backwards-compat (oude API naam) --------
 async function ingestTranscript(payload: { conversation_id: string; content: string }) {
-  try {
-    await Promise.all([suggest(payload.conversation_id, payload.content), assist(payload.conversation_id, payload.content)]);
-  } catch { /* no-op */ }
+  try { await Promise.all([suggest(payload.conversation_id, payload.content), assist(payload.conversation_id, payload.content)]); }
+  catch { /* no-op */ }
   return { ok: true as const };
 }
 
-// -------- Analytics (wrapper; backend route kan optioneel zijn) --------
+// -------- Analytics (optioneel) --------
 async function analyticsOverview(params?: { from?: string; to?: string }) {
-  // Probeert /api/analytics/overview; als je backend een andere route gebruikt kun je dat hier 1 plek wijzigen.
   return await get<any>("/api/analytics/overview", params);
 }
 
 // -------- Default export --------
 const api = {
-  // generieke helpers
+  // generiek
   get, post, patch, put, del,
   // auth
   me, login, logout,
