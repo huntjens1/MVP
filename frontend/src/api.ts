@@ -1,36 +1,148 @@
-const BASE = import.meta.env.VITE_API_BASE_URL;
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
-async function j(method: string, path: string, body?: any) {
-  const res = await fetch(`${BASE}${path}`, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: body ? JSON.stringify(body) : undefined
+// -------- Types --------
+export type User = { id: string; name: string; email: string };
+
+export type WsTokenResponse = { token: string };
+
+export type TicketSkeleton = {
+  title: string;
+  description: string;
+  summary?: string;
+  short_description?: string;
+  priority: "P1" | "P2" | "P3" | "P4";
+  priorityNumber?: number;
+  ttr_minutes?: number;
+  ttr_hours?: number;
+  urgency?: "Low" | "Medium" | "High" | "Critical";
+  impact?: "Low" | "Medium" | "High" | "Critical";
+  ci?: string;
+  tags?: string[];
+  meta?: Record<string, any>;
+};
+
+export type TicketOverrides = Partial<
+  Pick<TicketSkeleton, "urgency" | "impact" | "ci" | "tags" | "priority"> & { category?: string }
+>;
+
+// -------- Helpers --------
+const BASE = (import.meta.env.VITE_API_BASE_URL as string) ?? "";
+
+async function json<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
+  const res = await fetch(input, {
+    credentials: "include",
+    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    ...init,
   });
-  if (!res.ok) {
-    let text = '';
-    try { text = await res.text(); } catch {}
-    throw new Error(text || `HTTP ${res.status}`);
-  }
-  return res.json();
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return (await res.json()) as T;
 }
 
-/** Nieuwe, getypeerde helpers (voorkeur) */
-const api = {
-  wsToken: () => j('POST', '/api/ws-token'),
-  ingestTranscript: (payload: {
-    conversation_id: string; content: string; is_final?: boolean; speaker_label?: string; speaker?: number;
-  }) => j('POST', '/api/transcripts/ingest', payload),
-  suggestOnDemand: (transcript: string) => j('POST', '/api/suggest-question', { transcript }),
-  feedback: (payload: { suggestion_id?: string; conversation_id: string; feedback: -1|0|1; suggestion_text?: string }) =>
-    j('POST', '/api/ai-feedback', payload),
-  analyticsOverview: () => j('GET', '/api/analytics/overview'),
+// -------- Auth --------
+async function login(email: string, password: string) {
+  return await json<{ user: User | null }>(`${BASE}/api/login`, {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}
 
-  /** Backwards-compatibility voor bestaande code */
-  get:  (path: string) => j('GET', path),
-  post: (path: string, body?: any) => j('POST', path, body),
-  patch:(path: string, body?: any) => j('PATCH', path, body),
-  del:  (path: string) => j('DELETE', path)
+async function me() {
+  try {
+    return await json<{ user: User | null }>(`${BASE}/api/me`);
+  } catch {
+    return { user: null };
+  }
+}
+
+async function logout() {
+  try {
+    await json<{ ok: true }>(`${BASE}/api/logout`, { method: "POST" });
+  } catch {}
+  return { ok: true as const };
+}
+
+// -------- Realtime / WS --------
+async function wsToken() {
+  return await json<WsTokenResponse>(`${BASE}/api/ws-token`, { method: "POST" });
+}
+
+// -------- SSE + triggers --------
+function suggestStream(conversation_id: string) {
+  const url = new URL(`${BASE}/api/suggestions`);
+  url.searchParams.set("conversation_id", conversation_id);
+  return new EventSource(url.toString(), { withCredentials: true });
+}
+
+async function suggest(conversation_id: string, transcript: string) {
+  return await json<{ suggestions: Array<{ text: string }> }>(`${BASE}/api/suggest`, {
+    method: "POST",
+    body: JSON.stringify({ conversation_id, transcript }),
+  });
+}
+
+function assistStream(conversation_id: string) {
+  const url = new URL(`${BASE}/api/assist-stream`);
+  url.searchParams.set("conversation_id", conversation_id);
+  return new EventSource(url.toString(), { withCredentials: true });
+}
+
+async function assist(conversation_id: string, transcript: string) {
+  return await json<{ suggestion?: string }>(`${BASE}/api/assist`, {
+    method: "POST",
+    body: JSON.stringify({ conversation_id, transcript }),
+  });
+}
+
+// -------- Summaries / Ticket --------
+async function summarize(transcript: string) {
+  return await json<{ summary: string }>(`${BASE}/api/summarize`, {
+    method: "POST",
+    body: JSON.stringify({ transcript }),
+  });
+}
+
+async function ticketSkeleton(conversation_id: string, transcript: string, overrides?: TicketOverrides) {
+  const payload: any = { conversation_id, transcript, ...(overrides || {}) };
+  const r = await json<{ ticket?: TicketSkeleton; skeleton?: TicketSkeleton }>(
+    `${BASE}/api/ticket-skeleton`,
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+  const ticket = (r.skeleton ?? r.ticket) as TicketSkeleton | undefined;
+  if (!ticket) throw new Error("No ticket in response");
+  return { ticket };
+}
+
+// -------- Backwards-compat (oude API naam) --------
+async function ingestTranscript(payload: { conversation_id: string; content: string }) {
+  // Houd bestaande call-sites in leven. Triggert zowel suggest als assist.
+  try {
+    await Promise.all([
+      suggest(payload.conversation_id, payload.content),
+      assist(payload.conversation_id, payload.content),
+    ]);
+  } catch {
+    /* no-op */
+  }
+  return { ok: true as const };
+}
+
+// -------- Default export --------
+const api = {
+  // auth
+  me,
+  login,
+  logout,
+  // ws
+  wsToken,
+  // llm/sse
+  suggest,
+  suggestStream,
+  assist,
+  assistStream,
+  summarize,
+  ticketSkeleton,
+  // compat
+  ingestTranscript,
 };
 
 export default api;

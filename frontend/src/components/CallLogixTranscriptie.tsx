@@ -1,29 +1,14 @@
 // frontend/src/components/CallLogixTranscriptie.tsx
 import { useEffect, useRef, useState } from "react";
-import api, { type TicketSkeleton } from "../api/index";
+import api, { type TicketSkeleton, type TicketOverrides } from "../api";
 import { startMicPcm16k, type MicStopper } from "../lib/capturePcm16k";
 import { maskPII } from "../utils/pii";
+import RightPanel, { type Classification } from "./RightPanel";
 
-type DGAlt = {
-  transcript?: string;
-  words?: Array<{ speaker?: number }>;
-};
-type DGRealtime = {
-  channel?: { alternatives?: DGAlt[]; is_final?: boolean };
-  alternatives?: DGAlt[];
-  is_final?: boolean;
-  type?: string;
-} | any;
+type DGAlt = { transcript?: string; words?: Array<{ speaker?: number }> };
+type DGRealtime = { channel?: { alternatives?: DGAlt[]; is_final?: boolean }; alternatives?: DGAlt[]; is_final?: boolean } | any;
 
-type Segment = {
-  id: string;
-  speaker: "Agent" | "Klant";
-  text: string; // masked
-  final: boolean;
-  flagged: boolean;
-};
-
-import RightPanel from "./RightPanel";
+type Segment = { id: string; speaker: "Agent" | "Klant"; text: string; final: boolean; flagged: boolean };
 
 export default function CallLogixTranscriptie() {
   const [recording, setRecording] = useState(false);
@@ -35,6 +20,16 @@ export default function CallLogixTranscriptie() {
   const [runbook, setRunbook] = useState<string[]>([]);
   const [ticket, setTicket] = useState<TicketSkeleton | null>(null);
   const [slaBadge, setSlaBadge] = useState<string>("P4 · TTR ~48u");
+  const [summary, setSummary] = useState<string>("");
+
+  // ITIL intake state
+  const [classif, setClassif] = useState<Classification>({
+    type: "Incident",
+    impact: "Low",
+    urgency: "Medium",
+    priority: "P4",
+    ci: "",
+  });
 
   // infra
   const wsRef = useRef<WebSocket | null>(null);
@@ -45,13 +40,9 @@ export default function CallLogixTranscriptie() {
   const debounceTicket = useRef<number | null>(null);
   const lastActivityRef = useRef<number>(Date.now());
   const [coach, setCoach] = useState<string>("");
+  const lastContextRef = useRef<string>("");
 
-  useEffect(() => {
-    return () => {
-      void stopRecording();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useEffect(() => () => { void stopRecording(); }, []);
 
   // Dead-air coach
   useEffect(() => {
@@ -80,21 +71,13 @@ export default function CallLogixTranscriptie() {
   }
 
   function onWsMessage(ev: MessageEvent) {
-    const handleString = (s: string) => {
-      try {
-        handleDG(JSON.parse(s));
-      } catch {
-        /* ignore */
-      }
-    };
+    const handleString = (s: string) => { try { handleDG(JSON.parse(s)); } catch {} };
     if (typeof ev.data === "string") return handleString(ev.data);
     if (ev.data instanceof ArrayBuffer) {
       const txt = new TextDecoder().decode(new Uint8Array(ev.data));
       return handleString(txt);
     }
-    if (ev.data && typeof (ev.data as Blob).text === "function") {
-      (ev.data as Blob).text().then(handleString).catch(() => {});
-    }
+    if ((ev.data as any)?.text) (ev.data as Blob).text().then(handleString).catch(() => {});
   }
 
   async function handleDG(msg: DGRealtime) {
@@ -117,31 +100,13 @@ export default function CallLogixTranscriptie() {
           const seg: Segment = { id: crypto.randomUUID(), speaker, text: masked, final: true, flagged };
           const next = [...list, seg];
           const ctx = lastN(next, 4);
+          lastContextRef.current = ctx;
 
           // triggers
           void api.suggest(convoIdRef.current, ctx).catch(() => {});
           void api.assist(convoIdRef.current, ctx).catch(() => {});
           if (debounceTicket.current) window.clearTimeout(debounceTicket.current);
-          debounceTicket.current = window.setTimeout(async () => {
-            try {
-              const r = await api.ticketSkeleton(convoIdRef.current, ctx);
-              const sk: any = r?.ticket ?? null; // api normaliseert al naar { ticket }
-              if (sk) {
-                setTicket(sk);
-                const ttrMin =
-                  (typeof sk.ttr_minutes === "number" ? sk.ttr_minutes : undefined) ??
-                  (typeof sk.ttr_hours === "number" ? sk.ttr_hours * 60 : undefined);
-                if (typeof ttrMin === "number") {
-                  setSlaBadge(`${sk.priority ?? "P4"} · TTR ~${formatTTR(ttrMin)}`);
-                } else {
-                  const defHours = priToHours(String(sk.priority ?? "P4"));
-                  setSlaBadge(`${sk.priority ?? "P4"} · TTR ~${defHours}u`);
-                }
-              }
-            } catch {
-              /* ignore */
-            }
-          }, 1200);
+          debounceTicket.current = window.setTimeout(() => rebuildTicket(ctx), 1200);
 
           return next;
         });
@@ -152,57 +117,58 @@ export default function CallLogixTranscriptie() {
     }
   }
 
-  function priToHours(p: string) {
-    const map: Record<string, number> = { P1: 4, P2: 8, P3: 24, P4: 48 };
-    return map[p] ?? 48;
+  function priFromIU(urg: Classification["urgency"], imp: Classification["impact"]): Classification["priority"] {
+    const map = { Low: 4, Medium: 3, High: 2, Critical: 1 };
+    const u = map[urg] ?? 3;
+    const i = map[imp] ?? 4;
+    const p = Math.min(4, Math.max(1, Math.round((u + i) / 2)));
+    return (`P${p}` as Classification["priority"]);
   }
+
   function formatTTR(mins: number) {
     if (mins % 60 === 0) return `${Math.round(mins / 60)}u`;
-    const h = Math.floor(mins / 60);
-    const m = mins % 60;
+    const h = Math.floor(mins / 60), m = mins % 60;
     return h > 0 ? `${h}u${m}m` : `${m}m`;
   }
+
   function lastN(list: Segment[], n: number) {
     return list.slice(-n).map((s) => `${s.speaker}: ${s.text}`).join("\n");
   }
 
-  // ---------- SSE (robust handlers) ----------
-  function parseJSON(raw: any) {
-    try {
-      return typeof raw === "string" ? JSON.parse(raw) : raw;
-    } catch {
-      return {};
-    }
+  // ---------- SSE handlers ----------
+  function parseJSON(raw: any) { try { return typeof raw === "string" ? JSON.parse(raw) : raw; } catch { return {}; } }
+
+  function fallbackQuestions(ctx: string): string[] {
+    const q: string[] = [];
+    const low = ctx.toLowerCase();
+    if (low.includes("inlog")) q.push("Krijgt u een foutmelding bij het inloggen? Zo ja, welke exacte melding?");
+    if (low.includes("netwerk")) q.push("Werkt het op een ander netwerk of via hotspot? Kunt u een ping/gateway-test proberen?");
+    if (low.includes("email") || low.includes("mail")) q.push("Gaat het om de e-mailclient of webmail? En welke account/omgeving?");
+    q.push("Sinds wanneer speelt dit en is er kort ervoor iets gewijzigd (update/wijziging)?");
+    q.push("Op hoeveel gebruikers/locaties treedt dit op (impact)?");
+    q.push("Welke stappen zijn al geprobeerd en met welk resultaat?");
+    return Array.from(new Set(q));
   }
+
   function handleSuggestionsEvent(raw: any) {
     const d: any = parseJSON(raw) ?? {};
     const cid = d.conversation_id ?? d.conversationId ?? null;
-    if (cid && cid !== convoIdRef.current) return; // accepteer ook payloads zonder cid
+    if (cid && cid !== convoIdRef.current) return;
     const list =
-      d.suggestions ??
-      d.items ??
-      d.list ??
-      d.payload?.suggestions ??
-      (Array.isArray(d) ? d : []);
-    if (Array.isArray(list)) setSuggestions(list);
+      d.suggestions ?? d.items ?? d.list ?? d.payload?.suggestions ?? (Array.isArray(d) ? d : []);
+    let out = Array.isArray(list) ? list : [];
+    // zorg voor minimaal 3 suggesties
+    if (out.length < 3) out = [...out, ...fallbackQuestions(lastContextRef.current)];
+    setSuggestions(Array.from(new Set(out)).slice(0, 6));
   }
+
   function handleAssistEvent(raw: any) {
     const d: any = parseJSON(raw) ?? {};
     const cid = d.conversation_id ?? d.conversationId ?? null;
     if (cid && cid !== convoIdRef.current) return;
     const actions =
-      d.actions ??
-      d.nextActions ??
-      d.nextBestActions ??
-      d.next_best_actions ??
-      d.payload?.actions ??
-      [];
-    const steps =
-      d.runbook_steps ??
-      d.runbook ??
-      d.steps ??
-      d.payload?.runbook ??
-      [];
+      d.actions ?? d.nextActions ?? d.nextBestActions ?? d.next_best_actions ?? d.payload?.actions ?? [];
+    const steps = d.runbook_steps ?? d.runbook ?? d.steps ?? d.payload?.runbook ?? [];
     if (Array.isArray(actions)) setNextActions(actions);
     if (Array.isArray(steps)) setRunbook(steps);
   }
@@ -210,35 +176,45 @@ export default function CallLogixTranscriptie() {
   async function openStreams() {
     const esSug = api.suggestStream(convoIdRef.current);
     sseSuggestRef.current = esSug;
-    esSug.addEventListener("suggestions", (ev: MessageEvent) => {
-      try { handleSuggestionsEvent(ev.data); } catch {}
-    });
-    esSug.onmessage = (ev: MessageEvent) => {
-      try { handleSuggestionsEvent(ev.data); } catch {}
-    };
-    esSug.onerror = () => {};
+    esSug.addEventListener("suggestions", (ev: MessageEvent) => { try { handleSuggestionsEvent(ev.data); } catch {} });
+    esSug.onmessage = (ev: MessageEvent) => { try { handleSuggestionsEvent(ev.data); } catch {} };
 
     const esAss = api.assistStream(convoIdRef.current);
     sseAssistRef.current = esAss;
-    esAss.addEventListener("assist", (ev: MessageEvent) => {
-      try { handleAssistEvent(ev.data); } catch {}
-    });
-    esAss.onmessage = (ev: MessageEvent) => {
-      try { handleAssistEvent(ev.data); } catch {}
-    };
+    esAss.addEventListener("assist", (ev: MessageEvent) => { try { handleAssistEvent(ev.data); } catch {} });
+    esAss.onmessage = (ev: MessageEvent) => { try { handleAssistEvent(ev.data); } catch {} };
+
+    esSug.onerror = () => {};
     esAss.onerror = () => {};
+  }
+
+  async function rebuildTicket(ctx: string) {
+    const overrides: TicketOverrides = {
+      category: classif.type,
+      urgency: classif.urgency,
+      impact: classif.impact,
+      ci: classif.ci || undefined,
+    };
+    try {
+      const r = await api.ticketSkeleton(convoIdRef.current, ctx, overrides);
+      const sk = r.ticket;
+      setTicket(sk);
+      const ttrMin =
+        (typeof sk.ttr_minutes === "number" ? sk.ttr_minutes : undefined) ??
+        (typeof sk.ttr_hours === "number" ? sk.ttr_hours * 60 : undefined);
+      if (typeof ttrMin === "number") setSlaBadge(`${sk.priority ?? "P4"} · TTR ~${formatTTR(ttrMin)}`);
+      else {
+        const p = priFromIU(classif.urgency, classif.impact);
+        setSlaBadge(`${sk.priority ?? p} · TTR ~${(p === "P1" ? 4 : p === "P2" ? 8 : p === "P3" ? 24 : 48)}u`);
+      }
+    } catch { /* ignore */ }
   }
 
   async function startRecording() {
     if (recording) return;
-    setSegments([]);
-    setInterim("");
-    setSuggestions([]);
-    setNextActions([]);
-    setRunbook([]);
-    setTicket(null);
-    setCoach("");
-    setSlaBadge("P4 · TTR ~48u");
+    setSegments([]); setInterim(""); setSuggestions([]); setNextActions([]); setRunbook([]);
+    setTicket(null); setCoach(""); setSlaBadge("P4 · TTR ~48u"); setSummary("");
+    setClassif((c) => ({ ...c, priority: "P4" }));
     convoIdRef.current = crypto.randomUUID();
 
     await openStreams();
@@ -255,11 +231,7 @@ export default function CallLogixTranscriptie() {
         setRecording(true);
         lastActivityRef.current = Date.now();
       } catch {
-        try {
-          wsRef.current?.close(1000, 'user_stop');
-      } catch {
-        /* ignore */
-      }
+        try { ws.close(1011, "mic_error"); } catch {}
       }
     };
     wsRef.current = ws;
@@ -267,52 +239,29 @@ export default function CallLogixTranscriptie() {
 
   async function stopRecording() {
     setRecording(false);
-    try {
-      await micStopRef.current?.();
-    } catch {}
+    try { await micStopRef.current?.(); } catch {}
     micStopRef.current = null;
-    try {
-      wsRef.current?.close();
-    } catch {}
+    try { wsRef.current?.close(1000, "user_stop"); } catch {}
     wsRef.current = null;
-    try {
-      sseSuggestRef.current?.close();
-    } catch {}
+    try { sseSuggestRef.current?.close(); } catch {}
     sseSuggestRef.current = null;
-    try {
-      sseAssistRef.current?.close();
-    } catch {}
+    try { sseAssistRef.current?.close(); } catch {}
     sseAssistRef.current = null;
-    if (debounceTicket.current) {
-      window.clearTimeout(debounceTicket.current);
-      debounceTicket.current = null;
-    }
+    if (debounceTicket.current) { window.clearTimeout(debounceTicket.current); debounceTicket.current = null; }
   }
 
-  // Hotkeys
+  // watch intake (impact/urgency) → priority
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey && e.shiftKey)) return;
-      if (e.code === "KeyS") {
-        e.preventDefault();
-        recording ? void stopRecording() : void startRecording();
-      }
-      if (e.code === "KeyD") {
-        e.preventDefault();
-        navigator.clipboard.writeText(segments.map((s) => s.text).join(" ").slice(0, 4000));
-      }
-      if (e.code === "KeyK") {
-        e.preventDefault();
-        if (suggestions[0]) navigator.clipboard.writeText(suggestions[0]);
-      }
-      if (e.code === "KeyN") {
-        e.preventDefault();
-        if (nextActions[0]) navigator.clipboard.writeText(nextActions[0]);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [recording, segments, suggestions, nextActions]);
+    setClassif((c) => ({ ...c, priority: priFromIU(c.urgency, c.impact) }));
+  }, [classif.urgency, classif.impact]);
+
+  async function doSummarize() {
+    const txt = segments.map((s) => `${s.speaker}: ${s.text}`).join("\n");
+    try {
+      const r = await api.summarize(txt);
+      setSummary(r.summary);
+    } catch { /* ignore */ }
+  }
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", gap: 24 }}>
@@ -321,58 +270,22 @@ export default function CallLogixTranscriptie() {
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <button
               onClick={recording ? () => void stopRecording() : () => void startRecording()}
-              style={{
-                padding: "10px 14px",
-                borderRadius: 10,
-                border: "1px solid #e5e7eb",
-                background: recording ? "#ef4444" : "#111827",
-                color: "white",
-                fontWeight: 700,
-                cursor: "pointer",
-                minWidth: 140,
-              }}
+              style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid #e5e7eb", background: recording ? "#ef4444" : "#111827", color: "white", fontWeight: 700, cursor: "pointer", minWidth: 140 }}
             >
               {recording ? "Stop opname" : "Start opname"}
             </button>
 
-            <span
-              style={{
-                padding: "6px 10px",
-                borderRadius: 999,
-                background: recording ? "rgba(239,68,68,.1)" : "rgba(17,24,39,.06)",
-                color: recording ? "#ef4444" : "#111827",
-                fontWeight: 600,
-              }}
-            >
+            <span style={{ padding: "6px 10px", borderRadius: 999, background: recording ? "rgba(239,68,68,.1)" : "rgba(17,24,39,.06)", color: recording ? "#ef4444" : "#111827", fontWeight: 600 }}>
               {recording ? "Live…" : "Niet actief"}
             </span>
 
-            <span
-              style={{
-                marginLeft: "auto",
-                padding: "6px 10px",
-                border: "1px solid #e5e7eb",
-                borderRadius: 999,
-                background: "#fff",
-                fontWeight: 700,
-              }}
-            >
+            <span style={{ marginLeft: "auto", padding: "6px 10px", border: "1px solid #e5e7eb", borderRadius: 999, background: "#fff", fontWeight: 700 }}>
               {slaBadge}
             </span>
           </div>
 
           {coach && (
-            <div
-              style={{
-                marginTop: 8,
-                border: "1px dashed #f59e0b",
-                background: "rgba(245,158,11,0.08)",
-                color: "#92400e",
-                borderRadius: 10,
-                padding: "8px 10px",
-                fontWeight: 600,
-              }}
-            >
+            <div style={{ marginTop: 8, border: "1px dashed #f59e0b", background: "rgba(245,158,11,0.08)", color: "#92400e", borderRadius: 10, padding: "8px 10px", fontWeight: 600 }}>
               {coach}
             </div>
           )}
@@ -395,54 +308,33 @@ export default function CallLogixTranscriptie() {
         </div>
       </section>
 
-      <RightPanel nextActions={nextActions} runbook={runbook} suggestions={suggestions} ticket={ticket} />
+      <RightPanel
+        nextActions={nextActions}
+        runbook={runbook}
+        suggestions={suggestions}
+        ticket={ticket}
+        classification={classif}
+        onClassificationChange={(c) => setClassif((prev) => ({ ...prev, ...c }))}
+        onRebuildTicket={() => rebuildTicket(lastContextRef.current)}
+        summary={summary}
+        onSummarize={doSummarize}
+      />
     </div>
   );
 }
 
-function Bubble({
-  speaker,
-  text,
-  dimmed,
-  flagged,
-}: {
-  speaker: "Agent" | "Klant";
-  text: string;
-  dimmed?: boolean;
-  flagged?: boolean;
-}) {
+function Bubble({ speaker, text, dimmed, flagged }: { speaker: "Agent" | "Klant"; text: string; dimmed?: boolean; flagged?: boolean; }) {
   const isAgent = speaker === "Agent";
   return (
     <div style={{ display: "flex", gap: 10, alignItems: "flex-start", justifyContent: isAgent ? "flex-end" : "flex-start" }}>
       {!isAgent && <Badge label="Klant" dark={false} />}
       <div
-        style={{
-          maxWidth: "72ch",
-          whiteSpace: "pre-wrap",
-          border: "1px solid #e5e7eb",
-          background: isAgent ? "#111827" : "#fff",
-          color: isAgent ? "#fff" : "#111827",
-          opacity: dimmed ? 0.6 : 1,
-          padding: "10px 12px",
-          borderRadius: 12,
-          position: "relative",
-        }}
+        style={{ maxWidth: "72ch", whiteSpace: "pre-wrap", border: "1px solid #e5e7eb", background: isAgent ? "#111827" : "#fff", color: isAgent ? "#fff" : "#111827", opacity: dimmed ? 0.6 : 1, padding: "10px 12px", borderRadius: 12, position: "relative" }}
         title={flagged ? "Gevoelige informatie automatisch gemaskeerd (AVG)" : undefined}
       >
         {text}
         {flagged ? (
-          <span
-            style={{
-              position: "absolute",
-              top: 6,
-              right: 8,
-              fontSize: 10,
-              background: "#fee2e2",
-              color: "#991b1b",
-              borderRadius: 6,
-              padding: "2px 6px",
-            }}
-          >
+          <span style={{ position: "absolute", top: 6, right: 8, fontSize: 10, background: "#fee2e2", color: "#991b1b", borderRadius: 6, padding: "2px 6px" }}>
             PII
           </span>
         ) : null}
@@ -454,18 +346,7 @@ function Bubble({
 
 function Badge({ label, dark }: { label: string; dark?: boolean }) {
   return (
-    <span
-      style={{
-        alignSelf: "center",
-        fontSize: 12,
-        fontWeight: 700,
-        color: dark ? "#fff" : "#111827",
-        background: dark ? "#111827" : "rgba(17,24,39,.06)",
-        border: dark ? "1px solid #111827" : "1px solid #e5e7eb",
-        padding: "4px 8px",
-        borderRadius: 999,
-      }}
-    >
+    <span style={{ alignSelf: "center", fontSize: 12, fontWeight: 700, color: dark ? "#fff" : "#111827", background: dark ? "#111827" : "rgba(17,24,39,.06)", border: dark ? "1px solid #111827" : "1px solid #e5e7eb", padding: "4px 8px", borderRadius: 999 }}>
       {label}
     </span>
   );
