@@ -1,11 +1,8 @@
 // backend/streams/suggestionsSSE.js
 'use strict';
 
-// conversation_id -> Set<res>
-const channels = new Map();
-
-// userId -> Set<conversationId>
-const userMap = new Map();
+const channels = new Map();   // conversation_id -> Set<res>
+const userMap  = new Map();   // userId -> Set<conversationId>
 
 function subscribe(conversationId, req, res) {
   if (!conversationId) {
@@ -18,12 +15,10 @@ function subscribe(conversationId, req, res) {
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
 
-  // Registreer kanaal
   let set = channels.get(conversationId);
   if (!set) { set = new Set(); channels.set(conversationId, set); }
   set.add(res);
 
-  // Koppel user -> conversation (laatste/actieve subscriptions)
   const userId = req.user?.id || req.user?.sub || null;
   if (userId) {
     let convs = userMap.get(userId);
@@ -31,7 +26,6 @@ function subscribe(conversationId, req, res) {
     convs.add(conversationId);
   }
 
-  // Heartbeat
   const hb = setInterval(() => { try { res.write('event: ping\ndata: {}\n\n'); } catch {} }, 25_000);
 
   req.on('close', () => {
@@ -40,7 +34,6 @@ function subscribe(conversationId, req, res) {
     set.delete(res);
     if (set.size === 0) {
       channels.delete(conversationId);
-      // opruimen uit userMap
       if (userId && userMap.has(userId)) {
         const convs = userMap.get(userId);
         convs.delete(conversationId);
@@ -69,8 +62,12 @@ function emit(conversationId, payload) {
   const set = channels.get(conversationId);
   if (!set || set.size === 0) return;
   const data = JSON.stringify(payload);
+  let delivered = 0;
   for (const res of set) {
-    try { res.write(`event: suggestions\ndata: ${data}\n\n`); } catch {}
+    try { res.write(`event: suggestions\ndata: ${data}\n\n`); delivered++; } catch {}
+  }
+  if (delivered) {
+    console.debug('[suggestionsSSE] delivered', { conversationId, delivered });
   }
 }
 
@@ -79,7 +76,6 @@ function emitToUser(userId, payload) {
   const convs = userMap.get(userId);
   if (!convs || convs.size === 0) return;
 
-  // de-dupe responses
   const targets = new Set();
   for (const convId of convs) {
     const set = channels.get(convId);
@@ -87,8 +83,12 @@ function emitToUser(userId, payload) {
     for (const res of set) targets.add(res);
   }
   const data = JSON.stringify(payload);
+  let delivered = 0;
   for (const res of targets) {
-    try { res.write(`event: suggestions\ndata: ${data}\n\n`); } catch {}
+    try { res.write(`event: suggestions\ndata: ${data}\n\n`); delivered++; } catch {}
+  }
+  if (delivered) {
+    console.debug('[suggestionsSSE] deliveredToUser', { userId, delivered });
   }
 }
 

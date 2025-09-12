@@ -3,7 +3,6 @@
 
 // conversation_id -> Set<res>
 const channels = new Map();
-
 // userId -> Set<conversationId>
 const userMap = new Map();
 
@@ -65,8 +64,12 @@ function emit(conversationId, payload) {
   const set = channels.get(conversationId);
   if (!set || set.size === 0) return;
   const data = JSON.stringify(payload);
+  let delivered = 0;
   for (const res of set) {
-    try { res.write(`event: assist\ndata: ${data}\n\n`); } catch {}
+    try { res.write(`event: assist\ndata: ${data}\n\n`); delivered++; } catch {}
+  }
+  if (delivered) {
+    console.debug('[assistSSE] delivered', { conversationId, delivered });
   }
 }
 
@@ -82,8 +85,12 @@ function emitToUser(userId, payload) {
     for (const res of set) targets.add(res);
   }
   const data = JSON.stringify(payload);
+  let delivered = 0;
   for (const res of targets) {
-    try { res.write(`event: assist\ndata: ${data}\n\n`); } catch {}
+    try { res.write(`event: assist\ndata: ${data}\n\n`); delivered++; } catch {}
+  }
+  if (delivered) {
+    console.debug('[assistSSE] deliveredToUser', { userId, delivered });
   }
 }
 
