@@ -57,14 +57,19 @@ function subscribe(conversationId, req, res) {
   };
 }
 
+function writeBoth(res, payload, typeName) {
+  const data = JSON.stringify(payload);
+  res.write(`event: ${typeName}\ndata: ${data}\n\n`); // named
+  res.write(`data: ${data}\n\n`);                      // default
+}
+
 function emit(conversationId, payload) {
   if (!conversationId) return;
   const set = channels.get(conversationId);
   if (!set || set.size === 0) return;
-  const data = JSON.stringify(payload);
   let delivered = 0;
   for (const res of set) {
-    try { res.write(`event: suggestions\ndata: ${data}\n\n`); delivered++; } catch {}
+    try { writeBoth(res, payload, 'suggestions'); delivered++; } catch {}
   }
   if (delivered) {
     console.debug('[suggestionsSSE] delivered', { conversationId, delivered });
@@ -82,10 +87,9 @@ function emitToUser(userId, payload) {
     if (!set) continue;
     for (const res of set) targets.add(res);
   }
-  const data = JSON.stringify(payload);
   let delivered = 0;
   for (const res of targets) {
-    try { res.write(`event: suggestions\ndata: ${data}\n\n`); delivered++; } catch {}
+    try { writeBoth(res, payload, 'suggestions'); delivered++; } catch {}
   }
   if (delivered) {
     console.debug('[suggestionsSSE] deliveredToUser', { userId, delivered });

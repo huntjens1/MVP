@@ -59,14 +59,21 @@ function subscribe(conversationId, req, res) {
   };
 }
 
+function writeBoth(res, payload, typeName) {
+  const data = JSON.stringify(payload);
+  // Named event (voor clients die addEventListener('assist') doen)
+  res.write(`event: ${typeName}\ndata: ${data}\n\n`);
+  // Default message event (voor clients die alleen onmessage gebruiken)
+  res.write(`data: ${data}\n\n`);
+}
+
 function emit(conversationId, payload) {
   if (!conversationId) return;
   const set = channels.get(conversationId);
   if (!set || set.size === 0) return;
-  const data = JSON.stringify(payload);
   let delivered = 0;
   for (const res of set) {
-    try { res.write(`event: assist\ndata: ${data}\n\n`); delivered++; } catch {}
+    try { writeBoth(res, payload, 'assist'); delivered++; } catch {}
   }
   if (delivered) {
     console.debug('[assistSSE] delivered', { conversationId, delivered });
@@ -84,10 +91,9 @@ function emitToUser(userId, payload) {
     if (!set) continue;
     for (const res of set) targets.add(res);
   }
-  const data = JSON.stringify(payload);
   let delivered = 0;
   for (const res of targets) {
-    try { res.write(`event: assist\ndata: ${data}\n\n`); delivered++; } catch {}
+    try { writeBoth(res, payload, 'assist'); delivered++; } catch {}
   }
   if (delivered) {
     console.debug('[assistSSE] deliveredToUser', { userId, delivered });
