@@ -1,17 +1,44 @@
-export function makeEventStream(url: string, onEvent: (type: string, data: any)=>void) {
+// frontend/src/lib/eventStream.ts
+// Generieke SSE helper met backoff en named+default events.
+
+export type EventHandler = (type: string, data: any) => void;
+
+export function makeEventStream(
+  url: string,
+  onEvent: EventHandler,
+  names: string[] = ["message", "assist", "suggestions"]
+) {
   let es: EventSource | null = null;
   let retry = 1000;
+
+  const safe = (s: any) => {
+    try {
+      return typeof s === "string" ? JSON.parse(s) : s;
+    } catch {
+      return s;
+    }
+  };
+
   const connect = () => {
     es = new EventSource(url, { withCredentials: true });
-    es.onmessage = (ev) => onEvent('message', safe(ev.data));
-    es.addEventListener('suggestions', (ev: MessageEvent) => onEvent('suggestions', safe((ev as any).data)));
+
+    // default message event
+    es.onmessage = (ev) => onEvent("message", safe((ev as MessageEvent).data));
+
+    // named events
+    for (const n of names.filter((n) => n !== "message")) {
+      es.addEventListener(n, (ev: MessageEvent) => onEvent(n, safe(ev.data)));
+    }
+
     es.onerror = () => {
-      es?.close();
+      try {
+        es?.close();
+      } catch {}
       setTimeout(connect, Math.min(retry, 15000));
-      retry *= 2;
+      retry *= 2; // exponential backoff
     };
   };
-  function safe(s: string) { try { return JSON.parse(s); } catch { return s; } }
+
   connect();
   return () => es?.close();
 }

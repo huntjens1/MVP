@@ -12,13 +12,17 @@ export type WsTokenResponse = { token: string };
 export type TicketSkeleton = {
   title: string;
   description: string;
+  summary?: string;            // alias
+  short_description?: string;  // alias
   priority: "P1" | "P2" | "P3" | "P4";
-  ttr_minutes: number;
-  impact: "Low" | "Medium" | "High" | "Critical";
-  urgency: "Low" | "Medium" | "High" | "Critical";
-  category: string;
-  ci?: string | null;
-  tags?: string[] | null;
+  priorityNumber?: number;     // alias
+  ttr_minutes?: number;
+  ttr_hours?: number;          // alias
+  urgency?: "Low" | "Medium" | "High" | "Critical";
+  impact?: "Low" | "Medium" | "High" | "Critical";
+  ci?: string;
+  tags?: string[];
+  meta?: Record<string, any>;
 };
 
 const BASE = (import.meta.env.VITE_API_BASE_URL as string) ?? "";
@@ -36,6 +40,13 @@ async function json<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
 
 /* ---------- Auth ---------- */
 
+async function login(email: string, password: string) {
+  return await json<{ user: User | null }>(`${BASE}/api/login`, {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}
+
 async function me() {
   try {
     return await json<{ user: User | null }>(`${BASE}/api/me`);
@@ -44,16 +55,9 @@ async function me() {
   }
 }
 
-async function login(email: string, password: string) {
-  return await json<{ user: User | null }>(`${BASE}/api/login`, {
-    method: "POST",
-    body: JSON.stringify({ email, password }),
-  });
-}
-
 async function logout() {
   try {
-    await json<unknown>(`${BASE}/api/logout`, { method: "POST" });
+    await json<{ ok: true }>(`${BASE}/api/logout`, { method: "POST" });
   } catch {
     /* ignore */
   }
@@ -76,20 +80,14 @@ function suggestStream(conversation_id: string) {
 }
 
 async function suggest(conversation_id: string, text: string) {
-  // trigger nieuwe suggesties server-side
-  try {
-    await json(`${BASE}/api/suggest`, {
-      method: "POST",
-      body: JSON.stringify({ conversation_id, text }),
-    });
-  } catch {
-    /* ignore */
-  }
-  return { ok: true as const };
+  // Backend broadcast via SSE; response bevat { suggestions } maar UI luistert live
+  return await json<{ suggestions: Array<{ text: string }> }>(`${BASE}/api/suggest`, {
+    method: "POST",
+    body: JSON.stringify({ conversation_id, transcript: text }),
+  });
 }
 
-/* ---------- Assist (NBA/Runbook) – optioneel aanwezig ---------- */
-/* Als je backend deze routes nog niet heeft, blijft de UI gewoon leeg. */
+/* ---------- Assist (SSE + trigger) ---------- */
 
 function assistStream(conversation_id: string) {
   const url = new URL(`${BASE}/api/assist-stream`);
@@ -99,79 +97,35 @@ function assistStream(conversation_id: string) {
 }
 
 async function assist(conversation_id: string, text: string) {
-  try {
-    await json(`${BASE}/api/assist`, {
-      method: "POST",
-      body: JSON.stringify({ conversation_id, text }),
-    });
-  } catch {
-    /* ignore */
-  }
-  return { ok: true as const };
+  // Backend broadcast via SSE; response bevat { suggestion } maar UI luistert live
+  return await json<{ suggestion?: string }>(`${BASE}/api/assist`, {
+    method: "POST",
+    body: JSON.stringify({ conversation_id, transcript: text }),
+  });
 }
 
-/* ---------- Ticket skeleton (met slimme fallback) ---------- */
+/* ---------- Summaries / Ticket ---------- */
+
+async function summarize(text: string) {
+  return await json<{ summary: string }>(`${BASE}/api/summarize`, {
+    method: "POST",
+    body: JSON.stringify({ transcript: text }),
+  });
+}
 
 async function ticketSkeleton(conversation_id: string, text: string) {
-  // 1) Probeer dedicated endpoint (als aanwezig)
-  try {
-    return await json<{ skeleton: TicketSkeleton }>(`${BASE}/api/ticket-skeleton`, {
+  // Backend kan { ticket } of { skeleton } teruggeven — normaliseer hier
+  const r = await json<{ ticket?: TicketSkeleton; skeleton?: TicketSkeleton }>(
+    `${BASE}/api/ticket-skeleton`,
+    {
       method: "POST",
-      body: JSON.stringify({ conversation_id, text }),
-    });
-  } catch {
-    // 2) Fallback via /api/summarize en heuristieken → altijd iets teruggeven
-    try {
-      const s = await json<{ summary: string }>(`${BASE}/api/summarize`, {
-        method: "POST",
-        body: JSON.stringify({ content: text }),
-      });
-      const lower = (s.summary || text || "").toLowerCase();
-
-      const isUrgent =
-        /storing|ligt eruit|kritiek|urgent|prod|nood/i.test(s.summary || text);
-      const priority: TicketSkeleton["priority"] = isUrgent ? "P2" : "P4";
-      const ttr = priority === "P2" ? 240 : 2880;
-
-      const skeleton: TicketSkeleton = {
-        title:
-          (s.summary || text).split("\n")[0]?.slice(0, 80) ||
-          "Supportverzoek",
-        description: s.summary || text,
-        priority,
-        ttr_minutes: ttr,
-        impact: isUrgent ? "High" : "Low",
-        urgency: isUrgent ? "High" : "Low",
-        category: /wachtwoord|login/.test(lower)
-          ? "Accounts / Wachtwoord"
-          : /mail|outlook|gmail/.test(lower)
-          ? "E-mail"
-          : /printer|afdruk/.test(lower)
-          ? "Printing"
-          : "Algemeen",
-        ci: null,
-        tags: null,
-      };
-      return { skeleton };
-    } catch {
-      // 3) Minimalistisch laatste redmiddel
-      const skeleton: TicketSkeleton = {
-        title: "Supportverzoek",
-        description: text,
-        priority: "P4",
-        ttr_minutes: 2880,
-        impact: "Low",
-        urgency: "Low",
-        category: "Algemeen",
-        ci: null,
-        tags: null,
-      };
-      return { skeleton };
+      body: JSON.stringify({ conversation_id, transcript: text }),
     }
-  }
+  );
+  const ticket = (r.skeleton ?? r.ticket) as TicketSkeleton | undefined;
+  if (!ticket) throw new Error("No ticket in response");
+  return { ticket };
 }
-
-/* ---------- Default export ---------- */
 
 const api = {
   me,
@@ -182,6 +136,7 @@ const api = {
   suggestStream,
   assist,
   assistStream,
+  summarize,
   ticketSkeleton,
 };
 

@@ -125,8 +125,7 @@ export default function CallLogixTranscriptie() {
           debounceTicket.current = window.setTimeout(async () => {
             try {
               const r = await api.ticketSkeleton(convoIdRef.current, ctx);
-              // Accept both { skeleton } and { ticket }
-              const sk: any = r?.skeleton ?? r?.ticket ?? null;
+              const sk: any = r?.ticket ?? null; // api normaliseert al naar { ticket }
               if (sk) {
                 setTicket(sk);
                 const ttrMin =
@@ -135,7 +134,6 @@ export default function CallLogixTranscriptie() {
                 if (typeof ttrMin === "number") {
                   setSlaBadge(`${sk.priority ?? "P4"} · TTR ~${formatTTR(ttrMin)}`);
                 } else {
-                  // fallback op prioriteit → uren
                   const defHours = priToHours(String(sk.priority ?? "P4"));
                   setSlaBadge(`${sk.priority ?? "P4"} · TTR ~${defHours}u`);
                 }
@@ -159,13 +157,11 @@ export default function CallLogixTranscriptie() {
     return map[p] ?? 48;
   }
   function formatTTR(mins: number) {
-    // 120 -> "2u", 90 -> "1u30m"
     if (mins % 60 === 0) return `${Math.round(mins / 60)}u`;
     const h = Math.floor(mins / 60);
     const m = mins % 60;
     return h > 0 ? `${h}u${m}m` : `${m}m`;
-    }
-
+  }
   function lastN(list: Segment[], n: number) {
     return list.slice(-n).map((s) => `${s.speaker}: ${s.text}`).join("\n");
   }
@@ -217,7 +213,6 @@ export default function CallLogixTranscriptie() {
     esSug.addEventListener("suggestions", (ev: MessageEvent) => {
       try { handleSuggestionsEvent(ev.data); } catch {}
     });
-    // default message fallback
     esSug.onmessage = (ev: MessageEvent) => {
       try { handleSuggestionsEvent(ev.data); } catch {}
     };
@@ -228,7 +223,6 @@ export default function CallLogixTranscriptie() {
     esAss.addEventListener("assist", (ev: MessageEvent) => {
       try { handleAssistEvent(ev.data); } catch {}
     });
-    // default message fallback
     esAss.onmessage = (ev: MessageEvent) => {
       try { handleAssistEvent(ev.data); } catch {}
     };
@@ -275,27 +269,19 @@ export default function CallLogixTranscriptie() {
     setRecording(false);
     try {
       await micStopRef.current?.();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     micStopRef.current = null;
     try {
       wsRef.current?.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     wsRef.current = null;
     try {
       sseSuggestRef.current?.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     sseSuggestRef.current = null;
     try {
       sseAssistRef.current?.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     sseAssistRef.current = null;
     if (debounceTicket.current) {
       window.clearTimeout(debounceTicket.current);

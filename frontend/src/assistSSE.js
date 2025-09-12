@@ -7,12 +7,10 @@ export function openAssistStream({ conversationId, onDelta, onDone, onError }) {
   const handle = (raw) => {
     try {
       const payload = typeof raw === "string" ? JSON.parse(raw) : raw || {};
-      // streaming-delta support
       if (payload?.type === "delta" && typeof payload.text === "string") {
         onDelta && onDelta(payload.text);
         return;
       }
-      // final payload (normalize)
       const actions =
         payload.actions ??
         payload.nextActions ??
