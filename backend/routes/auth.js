@@ -1,86 +1,67 @@
 // backend/routes/auth.js
 const express = require('express');
-const jwt = require('jsonwebtoken');
+const { signToken } = require('../middlewares/auth');
 
 const router = express.Router();
 
-// ---- config
-const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-prod';
-const COOKIE_NAME = 'auth';
+const AUTH_COOKIE_NAME = process.env.AUTH_COOKIE_NAME || 'auth';
 
-// Helper: read JWT from cookie or Authorization: Bearer
-function readAuth(req) {
-  const bearer = req.get('authorization');
-  const token =
-    (req.cookies && req.cookies[COOKIE_NAME]) ||
-    (bearer && bearer.startsWith('Bearer ') ? bearer.slice(7) : null);
-
-  if (!token) return null;
-  try {
-    return jwt.verify(token, JWT_SECRET);
-  } catch (err) {
-    console.error('[auth] verify failed:', err.message);
-    return null;
-  }
+function cookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: 'none',
+    secure: true,
+    path: '/',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  };
 }
 
 // POST /api/login
 router.post('/login', async (req, res) => {
-  try {
-    const { email, password } = req.body || {};
-    console.log('[auth] login attempt', { email, hasPassword: !!password });
+  const { email, password } = req.body || {};
+  const allowAny = /^1|true|yes$/i.test(String(process.env.APP_ALLOW_ANY || '0'));
 
-    // Minimal credential check:
-    // allow either static pair from env or "any password" if APP_ALLOW_ANY=1 for quick demos
-    const ALLOW_ANY = process.env.APP_ALLOW_ANY === '1';
-    const VALID_EMAIL = process.env.APP_USER_EMAIL;
-    const VALID_PASS = process.env.APP_USER_PASSWORD;
+  const validEmail = process.env.APP_USER_EMAIL || 'demo@calllogix.local';
+  const validPass = process.env.APP_USER_PASSWORD || 'demo123';
 
-    if (!ALLOW_ANY) {
-      if (!VALID_EMAIL || !VALID_PASS) {
-        console.warn('[auth] missing APP_USER_EMAIL / APP_USER_PASSWORD env');
-      }
-      const ok = email === VALID_EMAIL && password === VALID_PASS;
-      if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
+  if (!allowAny) {
+    if (!email || !password) return res.status(400).json({ error: 'missing_credentials' });
+    if (email !== validEmail || password !== validPass) {
+      return res.status(401).json({ error: 'invalid_credentials' });
     }
-
-    const token = jwt.sign({ sub: email, type: 'auth' }, JWT_SECRET, {
-      expiresIn: '7d',
-    });
-
-    // Cookie for browser use; header for programmatic use
-    res.cookie(COOKIE_NAME, token, {
-      httpOnly: true,
-      secure: true,
-      sameSite: 'none',
-      path: '/',
-      maxAge: 7 * 24 * 3600 * 1000,
-    });
-
-    console.log('[auth] login ok', { email });
-    return res.json({ user: { email }, token });
-  } catch (err) {
-    console.error('[auth] login error', err);
-    return res.status(500).json({ error: 'login_failed' });
   }
+
+  const user = { id: 'u_demo', name: 'Demo User', email: email || validEmail };
+  const token = signToken(user);
+
+  res.cookie(AUTH_COOKIE_NAME, token, cookieOptions());
+  console.debug('[auth] login', { email: user.email });
+  return res.json({ user, token });
 });
 
 // GET /api/me
 router.get('/me', (req, res) => {
-  const payload = readAuth(req);
-  if (!payload) {
-    console.log('[auth] /me unauthenticated');
-    return res.status(401).json({ error: 'unauthenticated' });
+  const hdr = req.headers.authorization || '';
+  const m = /^Bearer\s+(.+)$/i.exec(hdr);
+  const bearer = m ? m[1] : null;
+  const cookie = (req.signedCookies && req.signedCookies[AUTH_COOKIE_NAME]) || (req.cookies && req.cookies[AUTH_COOKIE_NAME]) || null;
+
+  const jwt = require('jsonwebtoken');
+  const secret = process.env.JWT_SECRET || 'dev-secret-change-me';
+  const token = bearer || cookie;
+  if (!token) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const p = jwt.verify(token, secret);
+    return res.json({ user: { id: p.sub, name: p.name, email: p.email } });
+  } catch {
+    return res.status(401).json({ error: 'invalid_token' });
   }
-  console.log('[auth] /me', { sub: payload.sub });
-  return res.json({ user: { email: payload.sub } });
 });
 
-// POST /api/logout (optional, used if you add a logout button)
+// POST /api/logout
 router.post('/logout', (req, res) => {
-  console.log('[auth] logout');
-  res.clearCookie(COOKIE_NAME, { path: '/' });
-  return res.status(204).end();
+  res.clearCookie(AUTH_COOKIE_NAME, { path: '/', sameSite: 'none', secure: true });
+  return res.json({ ok: true });
 });
 
 module.exports = router;

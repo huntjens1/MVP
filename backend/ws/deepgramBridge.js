@@ -1,141 +1,115 @@
 // backend/ws/deepgramBridge.js
-/**
- * Minimal WS upgrade hook for mic streaming.
- * - Attaches to Node http.Server
- * - Accepts upgrades on path `/ws/mic`
- * - Opens a WS to Deepgram and pipes frames back/forth
- *
- * Assumes you already mint a Deepgram URL + token on the server side.
- * If you’re doing that elsewhere, adapt connectDeepgram() accordingly.
- */
-
+// WS Bridge: /ws/mic <-> Deepgram listen WS
 const { WebSocketServer, WebSocket } = require('ws');
-const { URL } = require('url');
+const url = require('url');
+const jwt = require('jsonwebtoken');
 
 const PATH = '/ws/mic';
+const DG_WSS = 'wss://api.deepgram.com/v1/listen';
+const DG_KEY = process.env.DEEPGRAM_API_KEY;
+const JWT_SECRET = process.env.JWT_SECRET || 'change-me';
 
-function dbg(...args) {
-  // Zorg dat we ALTIJD debug prints hebben
-  console.log('[ws]', ...args);
-}
+function attach(server) {
+  if (!server || typeof server.on !== 'function') {
+    console.error('[ws] attach: invalid server');
+    return;
+  }
 
-function assertEnv(name) {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env ${name}`);
-  return v;
-}
-
-function deepgramUrl() {
-  // Streaming endpoint; tune query as needed (nova-2, interim, diarize, etc)
-  // Docs: https://developers.deepgram.com
-  const base = 'wss://api.deepgram.com/v1/listen';
-  const params = new URLSearchParams({
-    model: 'nova-2',
-    language: 'nl',
-    encoding: 'linear16',
-    sample_rate: '16000',
-    interim_results: 'true',
-    diarize: 'true',
-    smart_format: 'true',
-    punctuate: 'true',
-  });
-  return `${base}?${params.toString()}`;
-}
-
-function connectDeepgram() {
-  const url = deepgramUrl();
-  const headers = { Authorization: `Token ${assertEnv('DEEPGRAM_API_KEY')}` };
-  dbg('connecting to Deepgram', { url });
-  return new WebSocket(url, { headers });
-}
-
-/**
- * Create a dedicated WS server only for our path; keep Node’s HTTP server for Express.
- */
-function attach(server /* , app */) {
   const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (req, socket, head) => {
-    // Extra defensieve logging zodat we weten waarom iets faalt
+    const { pathname, query } = url.parse(req.url, true);
+    if (pathname !== PATH) return;
+
+    // Auth: korte WS-token
+    const token = String(query.token || '');
     try {
-      const hasUpgrade =
-        typeof req.headers.upgrade === 'string' &&
-        req.headers.upgrade.toLowerCase() === 'websocket';
-      const u = new URL(req.url, `http://${req.headers.host}`);
-      dbg('upgrade received', {
-        method: req.method,
-        url: req.url,
-        path: u.pathname,
-        hasUpgrade,
-      });
-
-      // Alleen deze route accepteren
-      if (!hasUpgrade || u.pathname !== PATH) {
-        return; // andere upgrades/requests negeren; Express kan hiermee verder
-      }
-
-      wss.handleUpgrade(req, socket, head, (client) => {
-        wss.emit('connection', client, req);
-      });
-    } catch (e) {
-      dbg('upgrade error', { error: e && e.message });
-      try { socket.destroy(); } catch (_) {}
+      const payload = jwt.verify(token, JWT_SECRET);
+      req.user = { sub: payload.sub, conversation_id: payload.conversation_id || null };
+    } catch {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
     }
+
+    wss.handleUpgrade(req, socket, head, (client) => {
+      wss.emit('connection', client, req, query);
+    });
   });
 
-  wss.on('connection', (client, req) => {
-    const u = new URL(req.url, `http://${req.headers.host}`);
-    const q = Object.fromEntries(u.searchParams.entries());
-    dbg('client connected', { path: u.pathname, query: q });
+  wss.on('connection', (client, req, query) => {
+    const params = new url.URLSearchParams();
 
-    // (optioneel) auth-check op q.token / cookies / headers
-    // if (!isValid(q.token)) { client.close(1008, 'unauthorized'); return; }
+    // Doorzetbare Deepgram parameters vanuit de client
+    const passParams = [
+      'model', 'language', 'tier', 'smart_format', 'interim_results',
+      'diarize', 'punctuate', 'numerals', 'encoding', 'sample_rate', 'channels',
+    ];
+    for (const k of passParams) {
+      if (query[k] != null) params.set(k, String(query[k]));
+    }
 
-    const dg = connectDeepgram();
+    // Defaults
+    if (!params.has('smart_format')) params.set('smart_format', 'true');
+    if (!params.has('interim_results')) params.set('interim_results', 'true');
 
-    dg.on('open', () => {
-      dbg('deepgram open');
-      try { client.send(JSON.stringify({ type: 'deepgram_open' })); } catch (_) {}
+    if (!DG_KEY) {
+      client.close(1011, 'Deepgram key missing');
+      return;
+    }
+
+    const dgUrl = `${DG_WSS}?${params.toString()}`;
+    const dg = new WebSocket(dgUrl, {
+      headers: { Authorization: `Token ${DG_KEY}` },
     });
 
-    dg.on('message', (msg) => {
-      // Forward de transcript events naar de browser
-      try { client.send(msg); } catch (e) { dbg('send to client failed', { err: e.message }); }
+    console.debug('[ws] client connected', {
+      path: req.url,
+      convo: req.user?.conversation_id || null,
+      dgUrl,
     });
 
-    dg.on('close', (code, reason) => {
-      dbg('deepgram closed', { code, reason: reason?.toString() });
-      try { client.close(1000, 'deepgram_closed'); } catch (_) {}
-    });
-
-    dg.on('error', (err) => {
-      dbg('deepgram error', { error: err && err.message });
-      try { client.close(1011, `deepgram_error:${err.message}`); } catch (_) {}
-    });
-
-    // Frames van browser -> Deepgram (PCM16)
-    client.on('message', (data, isBinary) => {
+    // client -> deepgram (audio)
+    client.on('message', (buf) => {
       if (dg.readyState === WebSocket.OPEN) {
-        try { dg.send(data, { binary: isBinary }); } catch (e) { dbg('send to deepgram failed', { err: e.message }); }
+        if (dg.bufferedAmount > 1_000_000) return; // backpressure ~1MB
+        dg.send(buf);
       }
-    });
-
-    client.on('close', (code, reason) => {
-      dbg('client closed', { code, reason: reason?.toString() });
-      try { dg.close(); } catch (_) {}
     });
 
     client.on('error', (err) => {
-      dbg('client error', { error: err && err.message });
-      try { dg.close(); } catch (_) {}
+      console.error('[ws] client error', { err: err?.message });
+      try { dg.close(); } catch {}
+    });
+
+    // deepgram -> client (transcripts)
+    dg.on('message', (msg) => {
+      try {
+        if (client.readyState === WebSocket.OPEN) client.send(msg);
+      } catch (e) {
+        console.error('[ws] send to client failed', { err: e?.message });
+      }
+    });
+
+    dg.on('open', () => console.debug('[ws] deepgram open'));
+
+    dg.on('close', (code, reason) => {
+      console.debug('[ws] deepgram closed', { code, reason: reason?.toString() });
+      try { client.close(); } catch {}
+    });
+
+    dg.on('error', (err) => {
+      console.error('[ws] deepgram error', { err: err?.message });
+      try { client.close(1011, 'deepgram_error'); } catch {}
+    });
+
+    client.on('close', (code, reason) => {
+      console.debug('[ws] client closed', { code, reason: reason?.toString() });
+      try { dg.close(); } catch {}
     });
   });
 
-  dbg(`Deepgram mic bridge attached on ${PATH}`);
+  console.debug('[ws] mic bridge attached', { path: PATH });
 }
 
-// Backwards compatibility met eerdere naam in jouw index/app:
-module.exports = {
-  attach,
-  attachDeepgramMicBridge: attach,
-};
+module.exports = { attach };

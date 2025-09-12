@@ -1,57 +1,46 @@
+'use strict';
+
 // backend/streams/suggestionsSSE.js
-// Pub/Sub model voor suggestions via SSE (meerdere clients per conversation)
+const channels = new Map(); // conversation_id -> Set<res>
 
-const clients = new Map(); // conversation_id -> Set<res>
-const DEBUG_ON = /^true|1|yes$/i.test(String(process.env.DEBUG || 'false'));
-const debug = (...a) => { if (DEBUG_ON) console.log('[suggestionsSSE]', ...a); };
-
-function subscribe(conversationId, res) {
-  if (!clients.has(conversationId)) clients.set(conversationId, new Set());
-  clients.get(conversationId).add(res);
-
-  res.setHeader('Content-Type', 'text/event-stream');
+function subscribe(conversationId, req, res) {
+  if (!conversationId) {
+    res.status(400).json({ error: 'missing_conversation_id' });
+    return () => {};
+  }
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
-  if (typeof res.flushHeaders === 'function') res.flushHeaders();
 
-  const count = clients.get(conversationId).size;
-  debug('client subscribed', { conversationId, clients: count });
+  let set = channels.get(conversationId);
+  if (!set) { set = new Set(); channels.set(conversationId, set); }
+  set.add(res);
 
-  // Heartbeat
-  const hb = setInterval(() => {
-    try { res.write(`event: ping\ndata: {}\n\n`); } catch {}
-  }, 15000);
+  const hb = setInterval(() => { try { res.write('event: ping\ndata: {}\n\n'); } catch {} }, 25_000);
 
-  res.on('close', () => {
+  req.on('close', () => {
     clearInterval(hb);
-    const set = clients.get(conversationId);
-    if (set) {
-      set.delete(res);
-      if (set.size === 0) clients.delete(conversationId);
-    }
-    debug('client closed', {
-      conversationId,
-      remaining: clients.get(conversationId)?.size || 0,
-    });
+    set.delete(res);
+    if (set.size === 0) channels.delete(conversationId);
+    try { res.end(); } catch {}
   });
+
+  return () => {
+    clearInterval(hb);
+    set.delete(res);
+    if (set.size === 0) channels.delete(conversationId);
+    try { res.end(); } catch {}
+  };
 }
 
 function emit(conversationId, payload) {
-  const set = clients.get(conversationId);
-  if (!set || set.size === 0) {
-    debug('emit skipped, no clients', { conversationId });
-    return;
-  }
+  const set = channels.get(conversationId);
+  if (!set || set.size === 0) return;
   const data = JSON.stringify(payload);
   for (const res of set) {
-    try {
-      res.write(`event: suggestions\ndata: ${data}\n\n`);
-    } catch (e) {
-      debug('emit write error', e?.message);
-    }
+    try { res.write(`event: suggestions\ndata: ${data}\n\n`); } catch {}
   }
-  debug('emit sent', { conversationId, receivers: set.size });
 }
 
 module.exports = { subscribe, emit };

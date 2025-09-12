@@ -1,57 +1,53 @@
-// middlewares/debug.js
+// backend/middlewares/debug.js
 const { randomUUID } = require('crypto');
-const logger = require('../utils/logger');
 
 function redact(obj = {}, max = 500) {
-  // redigeer potentieel gevoelige of te grote payloads
-  const clone = {};
+  const out = {};
   for (const k of Object.keys(obj || {})) {
     const v = obj[k];
     if (v == null) continue;
-    const s = typeof v === 'string' ? v : JSON.stringify(v);
-    clone[k] = s.length > max ? `${s.slice(0, max)}…(${s.length}b)` : s;
+    const s = typeof v === 'string' ? v : safeJson(v);
+    out[k] = s.length > max ? `${s.slice(0, max)}…(${s.length}b)` : s;
   }
-  return clone;
+  return out;
 }
 
-function requestLogger() {
-  return (req, res, next) => {
-    // koppel een request id
-    req.id = req.id || randomUUID().slice(0, 8);
-    const start = process.hrtime.bigint();
+function safeJson(v) {
+  try { return JSON.stringify(v); } catch { return String(v); }
+}
 
-    // basiscontext
-    const base = {
-      id: req.id,
-      ip: req.headers['x-forwarded-for'] || req.socket?.remoteAddress,
+function requestLogger({ logBodies = false } = {}) {
+  return (req, res, next) => {
+    const id = randomUUID();
+    req.id = id;
+    res.setHeader('X-Request-Id', id);
+
+    const start = Date.now();
+
+    const ctx = {
+      id,
       method: req.method,
-      path: req.originalUrl || req.url
+      path: req.originalUrl,
+      origin: req.headers.origin,
     };
 
-    logger.info('REQ', { ...base, ua: req.headers['user-agent'] });
+    console.debug('[http] req', {
+      ...ctx,
+      body: logBodies ? redact(req.body) : undefined,
+      cookie: req.headers?.cookie ? 'present' : 'absent',
+    });
 
-    // als response klaar is, log status + duur
     res.on('finish', () => {
-      const durMs = Number(process.hrtime.bigint() - start) / 1e6;
-      const ctx = {
-        ...base,
-        status: res.statusCode,
-        ms: Math.round(durMs)
+      const ms = Date.now() - start;
+      const status = res.statusCode;
+      const level = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'debug';
+      const payload = {
+        ...ctx,
+        status,
+        ms,
+        user: req.user ? { id: req.user.id, email: req.user.email } : null,
       };
-
-      if (res.statusCode >= 400) {
-        // uitgebreide debug bij fout
-        logger.error('RES', {
-          ...ctx,
-          query: redact(req.query),
-          params: redact(req.params),
-          body: redact(req.body),
-          cookie: req.headers?.cookie ? 'present' : 'absent',
-          user: req.user ? { id: req.user.id, email: req.user.email } : null
-        });
-      } else {
-        logger.info('RES', ctx);
-      }
+      console[level === 'debug' ? 'debug' : level]('[http] res', payload);
     });
 
     next();

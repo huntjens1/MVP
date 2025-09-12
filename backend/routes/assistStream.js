@@ -1,29 +1,15 @@
-'use strict';
-
+// backend/routes/assistStream.js
 const express = require('express');
+const { subscribe } = require('../streams/assistSSE');
+const { optionalAuth } = require('../middlewares/auth');
+
 const router = express.Router();
-const { sseSubscribe } = require('../streams/assistSSE');
 
-// NB: Als je auth wilt afdwingen kun je hier je eigen middleware plaatsen
-// const { requireAuth } = require('../middlewares/auth');  // voorbeeld
-
-router.get('/assist-stream', /* requireAuth, */ (req, res) => {
-  const conversationId = req.query.conversation_id;
-  console.log('[assist-stream] SSE subscribe attempt', {
-    conversationId,
-    origin: req.headers.origin,
-  });
-
-  try {
-    sseSubscribe(conversationId, res, req);
-  } catch (err) {
-    console.error('[assist-stream] SSE subscribe error:', err?.message || err);
-    if (!res.headersSent) {
-      res.status(500).json({ error: 'sse_subscribe_failed' });
-    } else {
-      try { res.end(); } catch {}
-    }
-  }
+// GET /api/assist-stream?conversation_id=...
+router.get('/assist-stream', optionalAuth, (req, res) => {
+  const conversationId = req.query.conversation_id || req.query.conversationId;
+  console.debug('[assistSSE] subscribe', { conversationId, user: req.user?.email });
+  subscribe(conversationId, req, res);
 });
 
 module.exports = router;

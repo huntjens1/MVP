@@ -1,48 +1,51 @@
 // backend/routes/ticket.js
 const express = require('express');
+const { requireAuth } = require('../middlewares/auth');
+
 const router = express.Router();
 
-/**
- * POST /api/ticket-skeleton
- * Body: { conversation_id?, title?, description?, priority?, ci?, impact? }
- * Bouwt een skeleton payload voor je ticketing UI. 
- * Laat bestaande velden intact en vult defaults in waar nodig.
- */
-router.post('/ticket-skeleton', async (req, res) => {
+// POST /api/ticket-skeleton
+router.post('/ticket-skeleton', requireAuth, async (req, res) => {
   try {
     const {
       conversation_id,
-      title,
-      description,
-      priority,
+      customer,
       ci,
-      impact,
-      tags,
+      category = 'Service Request',
+      urgency = 'Medium',
+      impact = 'Low',
+      tags = [],
+      description = '—',
     } = req.body || {};
 
-    console.log('[ticket] skeleton request', {
-      conversation_id,
-      hasTitle: !!title,
-      hasDescription: !!description,
-    });
+    const title = `[${category}] ${customer || 'Onbekende klant'} - ${ci || 'n.b.'}`;
+    const priority = derivePriority(urgency, impact);
 
-    // Defaults die overeenkomen met je UI
-    const payload = {
-      title: title || 'Supportverzoek',
-      priority: priority || 'P4 (TTR ~2880m)',
-      impact: impact || 'Low / Low',
-      category: 'Algemeen',
+    const ticket = {
+      title,
+      description,
       ci: ci || 'n.b.',
+      priority,
+      category,
+      urgency,
+      impact,
       tags: Array.isArray(tags) ? tags : [],
-      description: description || '—',
-      meta: { conversation_id },
+      meta: { conversation_id: conversation_id || null },
     };
 
-    return res.json({ ok: true, ticket: payload });
+    console.debug('[ticket] skeleton', { conversation_id, priority, category });
+    return res.json({ ticket });
   } catch (err) {
-    console.error('[ticket] skeleton error', err);
+    console.error('[ticket] skeleton error', { error: err?.message });
     return res.status(500).json({ error: 'ticket_skeleton_failed' });
   }
 });
+
+function derivePriority(urgency, impact) {
+  const map = { Low: 4, Medium: 3, High: 2, Critical: 1 };
+  const u = map[urgency] ?? 3;
+  const i = map[impact] ?? 4;
+  return `P${Math.min(4, Math.max(1, Math.round((u + i) / 2)))}`;
+}
 
 module.exports = router;
