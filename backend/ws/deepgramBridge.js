@@ -1,5 +1,4 @@
 // backend/ws/deepgramBridge.js
-// WS Bridge: /ws/mic <-> Deepgram listen WS
 'use strict';
 const { WebSocketServer, WebSocket } = require('ws');
 const url = require('url');
@@ -10,7 +9,6 @@ const DG_WSS = 'wss://api.deepgram.com/v1/listen';
 const DG_KEY = process.env.DEEPGRAM_API_KEY;
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me';
 
-// Heartbeat config
 const CLIENT_PING_MS = 25_000;
 const IDLE_TIMEOUT_MS = 90_000;
 
@@ -45,21 +43,15 @@ function attach(server) {
   });
 
   wss.on('connection', (client, req, query) => {
-    // Assemble Deepgram params
     const params = new url.URLSearchParams();
-
     const codec = query.codec != null ? String(query.codec) : null;
     const encoding = query.encoding != null ? String(query.encoding) : (codec || null);
 
-    const passParams = [
-      'model', 'language', 'tier', 'smart_format', 'interim_results',
-      'diarize', 'punctuate', 'numerals',
-    ];
+    const passParams = ['model','language','tier','smart_format','interim_results','diarize','punctuate','numerals'];
     for (const k of passParams) {
       if (query[k] != null) params.set(k, String(query[k]));
     }
 
-    // Safe defaults
     params.set('encoding', encoding || 'linear16');
     params.set('sample_rate', String(query.sample_rate != null ? query.sample_rate : 16000));
     params.set('channels', String(query.channels != null ? query.channels : 1));
@@ -72,9 +64,7 @@ function attach(server) {
     }
 
     const dgUrl = `${DG_WSS}?${params.toString()}`;
-    const dg = new WebSocket(dgUrl, {
-      headers: { Authorization: `Token ${DG_KEY}` },
-    });
+    const dg = new WebSocket(dgUrl, { headers: { Authorization: `Token ${DG_KEY}` } });
 
     console.debug('[ws] client connected', {
       path: req.url,
@@ -86,31 +76,24 @@ function attach(server) {
     let firstAudioAt = 0;
     let lastActivity = Date.now();
 
-    // Heartbeat / idle guard
-    let hbInt = setInterval(() => {
-      try {
-        if (client.readyState === WebSocket.OPEN) client.ping();
-      } catch {}
-      // Idle timeout (geen audio/activiteit)
+    const hbInt = setInterval(() => {
+      try { if (client.readyState === WebSocket.OPEN) client.ping(); } catch {}
       if (Date.now() - lastActivity > IDLE_TIMEOUT_MS) {
         try { client.close(1000, 'idle_timeout'); } catch {}
         try { dg.close(1000, 'idle_timeout'); } catch {}
       }
     }, CLIENT_PING_MS);
 
-    client.on('pong', () => { /* noop, maar reset evt. idle timers hier als je wilt */ });
+    client.on('pong', () => { /* noop */ });
 
-    // client -> deepgram (audio)
     client.on('message', (buf) => {
       lastActivity = Date.now();
       if (dg.readyState === WebSocket.OPEN) {
-        if (dg.bufferedAmount > 1_000_000) return; // backpressure
+        if (dg.bufferedAmount > 1_000_000) return;
         dg.send(buf);
         frames += 1;
         if (frames === 1) firstAudioAt = Date.now();
-        if (frames <= 3) {
-          console.debug('[ws] audio frame -> dg', { size: buf?.length || 0, frames });
-        }
+        if (frames <= 3) console.debug('[ws] audio frame -> dg', { size: buf?.length || 0, frames });
       }
     });
 
@@ -119,11 +102,8 @@ function attach(server) {
       try { dg.close(1011, 'client_error'); } catch {}
     });
 
-    // deepgram -> client
     dg.on('message', (msg) => {
-      try {
-        if (client.readyState === WebSocket.OPEN) client.send(msg);
-      } catch (e) {
+      try { if (client.readyState === WebSocket.OPEN) client.send(msg); } catch (e) {
         console.error('[ws] send to client failed', { err: e?.message });
       }
     });
@@ -133,7 +113,8 @@ function attach(server) {
     dg.on('close', (code, reason) => {
       const rc = code === 1005 ? 'no_status' : code;
       console.debug('[ws] deepgram closed', {
-        code: rc, reason: reason?.toString(), frames, firstAudioMs: firstAudioAt ? (Date.now() - firstAudioAt) : null,
+        code: rc, reason: reason?.toString(), frames,
+        firstAudioMs: firstAudioAt ? (Date.now() - firstAudioAt) : null,
       });
       try { client.close(1000, 'dg_closed'); } catch {}
       clearInterval(hbInt);
