@@ -125,8 +125,21 @@ export default function CallLogixTranscriptie() {
           debounceTicket.current = window.setTimeout(async () => {
             try {
               const r = await api.ticketSkeleton(convoIdRef.current, ctx);
-              setTicket(r.skeleton);
-              setSlaBadge(`${r.skeleton.priority} · TTR ~${r.skeleton.ttr_minutes}m`);
+              // Accept both { skeleton } and { ticket }
+              const sk: any = r?.skeleton ?? r?.ticket ?? null;
+              if (sk) {
+                setTicket(sk);
+                const ttrMin =
+                  (typeof sk.ttr_minutes === "number" ? sk.ttr_minutes : undefined) ??
+                  (typeof sk.ttr_hours === "number" ? sk.ttr_hours * 60 : undefined);
+                if (typeof ttrMin === "number") {
+                  setSlaBadge(`${sk.priority ?? "P4"} · TTR ~${formatTTR(ttrMin)}`);
+                } else {
+                  // fallback op prioriteit → uren
+                  const defHours = priToHours(String(sk.priority ?? "P4"));
+                  setSlaBadge(`${sk.priority ?? "P4"} · TTR ~${defHours}u`);
+                }
+              }
             } catch {
               /* ignore */
             }
@@ -141,41 +154,84 @@ export default function CallLogixTranscriptie() {
     }
   }
 
+  function priToHours(p: string) {
+    const map: Record<string, number> = { P1: 4, P2: 8, P3: 24, P4: 48 };
+    return map[p] ?? 48;
+  }
+  function formatTTR(mins: number) {
+    // 120 -> "2u", 90 -> "1u30m"
+    if (mins % 60 === 0) return `${Math.round(mins / 60)}u`;
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return h > 0 ? `${h}u${m}m` : `${m}m`;
+    }
+
   function lastN(list: Segment[], n: number) {
     return list.slice(-n).map((s) => `${s.speaker}: ${s.text}`).join("\n");
+  }
+
+  // ---------- SSE (robust handlers) ----------
+  function parseJSON(raw: any) {
+    try {
+      return typeof raw === "string" ? JSON.parse(raw) : raw;
+    } catch {
+      return {};
+    }
+  }
+  function handleSuggestionsEvent(raw: any) {
+    const d: any = parseJSON(raw) ?? {};
+    const cid = d.conversation_id ?? d.conversationId ?? null;
+    if (cid && cid !== convoIdRef.current) return; // accepteer ook payloads zonder cid
+    const list =
+      d.suggestions ??
+      d.items ??
+      d.list ??
+      d.payload?.suggestions ??
+      (Array.isArray(d) ? d : []);
+    if (Array.isArray(list)) setSuggestions(list);
+  }
+  function handleAssistEvent(raw: any) {
+    const d: any = parseJSON(raw) ?? {};
+    const cid = d.conversation_id ?? d.conversationId ?? null;
+    if (cid && cid !== convoIdRef.current) return;
+    const actions =
+      d.actions ??
+      d.nextActions ??
+      d.nextBestActions ??
+      d.next_best_actions ??
+      d.payload?.actions ??
+      [];
+    const steps =
+      d.runbook_steps ??
+      d.runbook ??
+      d.steps ??
+      d.payload?.runbook ??
+      [];
+    if (Array.isArray(actions)) setNextActions(actions);
+    if (Array.isArray(steps)) setRunbook(steps);
   }
 
   async function openStreams() {
     const esSug = api.suggestStream(convoIdRef.current);
     sseSuggestRef.current = esSug;
     esSug.addEventListener("suggestions", (ev: MessageEvent) => {
-      try {
-        const data = JSON.parse(ev.data) as { conversation_id: string; suggestions: string[] };
-        if (data.conversation_id !== convoIdRef.current) return;
-        setSuggestions(data.suggestions || []);
-      } catch {
-        /* ignore */
-      }
+      try { handleSuggestionsEvent(ev.data); } catch {}
     });
+    // default message fallback
+    esSug.onmessage = (ev: MessageEvent) => {
+      try { handleSuggestionsEvent(ev.data); } catch {}
+    };
     esSug.onerror = () => {};
 
     const esAss = api.assistStream(convoIdRef.current);
     sseAssistRef.current = esAss;
     esAss.addEventListener("assist", (ev: MessageEvent) => {
-      try {
-        const data = JSON.parse(ev.data) as {
-          conversation_id: string;
-          intent: string;
-          next_best_actions: string[];
-          runbook_steps: string[];
-        };
-        if (data.conversation_id !== convoIdRef.current) return;
-        setNextActions(data.next_best_actions || []);
-        setRunbook(data.runbook_steps || []);
-      } catch {
-        /* ignore */
-      }
+      try { handleAssistEvent(ev.data); } catch {}
     });
+    // default message fallback
+    esAss.onmessage = (ev: MessageEvent) => {
+      try { handleAssistEvent(ev.data); } catch {}
+    };
     esAss.onerror = () => {};
   }
 
