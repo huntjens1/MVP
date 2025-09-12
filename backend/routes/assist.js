@@ -18,13 +18,22 @@ router.post('/assist', requireAuth, async (req, res) => {
     const intent  = suggestions?.[0]?.itil?.type || 'Follow-up';
 
     const payload = {
+      type: 'assist',
       conversation_id: conversation_id || null,
       intent,
-      // drie varianten (breekt niets, vergroot compat)
-      actions,                      // ← veel UIs lezen dit
-      nextBestActions: actions,     // ← camelCase
-      next_best_actions: actions,   // ← snake_case (bestaand)
+
+      // aliases zodat elke UI iets kan vinden:
+      actions,                      // veel UIs lezen deze
+      nextActions: actions,         // camelCase
+      nextBestActions: actions,     // camelCase gebruikt in sommige builds
+      next_best_actions: actions,   // snake_case (bestaand)
       runbook_steps: [],
+
+      // optionele “envelope” voor UIs die data.payload verwachten
+      payload: {
+        intent,
+        actions,
+      },
     };
 
     // 1) Emit naar expliciete conversatie (indien aanwezig)

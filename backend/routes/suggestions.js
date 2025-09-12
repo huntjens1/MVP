@@ -20,11 +20,23 @@ router.post('/suggest', requireAuth, async (req, res) => {
   const { conversation_id, transcript = '', context = {} } = req.body || {};
   try {
     const items = await generateSuggestionsNL(transcript, context, 5);
+    const list  = items.map(s => s.text);
 
     const payload = {
+      type: 'suggestions',
       conversation_id: conversation_id || null,
-      suggestions: items.map(s => s.text),
-      raw: items,
+
+      // aliases
+      suggestions: list, // bestaand
+      items: list,       // alias (veel UIs gebruiken 'items')
+      list,              // alias
+      raw: items,        // behoud extra velden (itil/priority)
+
+      // envelope
+      payload: {
+        suggestions: list,
+        raw: items,
+      },
     };
 
     // 1) Emit naar expliciete conversatie (als meegegeven)
