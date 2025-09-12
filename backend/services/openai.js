@@ -82,4 +82,29 @@ async function generateSuggestionsNL(transcript, context = {}, max = 3) {
     ],
   });
 
-  // Parseer eenvoudige lijstjes of JSON-acht
+  // Parseer eenvoudige lijstjes of JSON-achtige bullets
+  const lines = content
+    .split('\n')
+    .map(s => s.replace(/^[\-\*\d\.\)\s]+/, '').trim())
+    .filter(Boolean);
+
+  const out = lines.slice(0, max).map(x => ({
+    text: String(x).slice(0, 180),
+    itil: { type: guessType(x) },
+    priority: 50,
+  }));
+
+  return out;
+}
+
+function guessType(s='') {
+  s = s.toLowerCase();
+  if (s.includes('aanvraag') || s.includes('aanmaken') || s.includes('toegang')) return 'Service Request';
+  if (s.includes('wijzig') || s.includes('change') || s.includes('implement')) return 'Change';
+  return 'Incident';
+}
+
+module.exports = {
+  summarizeTranscriptNL,
+  generateSuggestionsNL,
+};
