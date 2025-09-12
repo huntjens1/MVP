@@ -21,11 +21,14 @@ function attach(server) {
     const { pathname, query } = url.parse(req.url, true);
     if (pathname !== PATH) return;
 
-    // Auth: korte WS-token
+    // Auth: kortlevende WS-token
     const token = String(query.token || '');
     try {
       const payload = jwt.verify(token, JWT_SECRET);
-      req.user = { sub: payload.sub, conversation_id: payload.conversation_id || null };
+      req.user = {
+        sub: payload.sub,
+        conversation_id: payload.conversation_id || null,
+      };
     } catch {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
@@ -38,18 +41,27 @@ function attach(server) {
   });
 
   wss.on('connection', (client, req, query) => {
+    // Parameters voor Deepgram samenstellen
     const params = new url.URLSearchParams();
 
-    // Doorzetbare Deepgram parameters vanuit de client
+    // 1) Neem client parameters over waar relevant
+    // Client stuurt 'codec=linear16'; Deepgram verwacht 'encoding=linear16'
+    const codec = query.codec != null ? String(query.codec) : null;
+    const encoding = query.encoding != null ? String(query.encoding) : (codec || null);
+
     const passParams = [
       'model', 'language', 'tier', 'smart_format', 'interim_results',
-      'diarize', 'punctuate', 'numerals', 'encoding', 'sample_rate', 'channels',
+      'diarize', 'punctuate', 'numerals',
+      // 'encoding', 'sample_rate', 'channels' zetten we hieronder met defaults
     ];
     for (const k of passParams) {
       if (query[k] != null) params.set(k, String(query[k]));
     }
 
-    // Defaults
+    // 2) Veilige defaults forceren voor PCM16 stream
+    params.set('encoding', encoding || 'linear16');
+    params.set('sample_rate', String(query.sample_rate != null ? query.sample_rate : 16000));
+    params.set('channels', String(query.channels != null ? query.channels : 1));
     if (!params.has('smart_format')) params.set('smart_format', 'true');
     if (!params.has('interim_results')) params.set('interim_results', 'true');
 
@@ -69,11 +81,21 @@ function attach(server) {
       dgUrl,
     });
 
+    let frames = 0;
+    let firstAudioAt = 0;
+
     // client -> deepgram (audio)
     client.on('message', (buf) => {
       if (dg.readyState === WebSocket.OPEN) {
-        if (dg.bufferedAmount > 1_000_000) return; // backpressure ~1MB
+        // backpressure guard
+        if (dg.bufferedAmount > 1_000_000) return; // ~1MB buffer
         dg.send(buf);
+        frames += 1;
+        if (frames === 1) firstAudioAt = Date.now();
+        // log alleen eerste paar frames om noise te beperken
+        if (frames <= 3) {
+          console.debug('[ws] audio frame -> dg', { size: buf?.length || 0, frames });
+        }
       }
     });
 
@@ -82,7 +104,7 @@ function attach(server) {
       try { dg.close(); } catch {}
     });
 
-    // deepgram -> client (transcripts)
+    // deepgram -> client (transcripts / events)
     dg.on('message', (msg) => {
       try {
         if (client.readyState === WebSocket.OPEN) client.send(msg);
@@ -94,7 +116,9 @@ function attach(server) {
     dg.on('open', () => console.debug('[ws] deepgram open'));
 
     dg.on('close', (code, reason) => {
-      console.debug('[ws] deepgram closed', { code, reason: reason?.toString() });
+      console.debug('[ws] deepgram closed', {
+        code, reason: reason?.toString(), frames, firstAudioMs: firstAudioAt ? (Date.now() - firstAudioAt) : null,
+      });
       try { client.close(); } catch {}
     });
 
@@ -104,7 +128,7 @@ function attach(server) {
     });
 
     client.on('close', (code, reason) => {
-      console.debug('[ws] client closed', { code, reason: reason?.toString() });
+      console.debug('[ws] client closed', { code, reason: reason?.toString(), frames });
       try { dg.close(); } catch {}
     });
   });

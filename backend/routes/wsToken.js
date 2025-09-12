@@ -23,15 +23,19 @@ router.post('/ws-token', (req, res) => {
 
   try {
     const me = jwt.verify(token, JWT_SECRET);
-    const { conversation_id } = req.body || {};
+    const conversation_id = (req.body && req.body.conversation_id) || (req.query && req.query.conversation_id) || null;
 
     const wsToken = jwt.sign(
-      { sub: me.sub || me.id || 'u_demo', conversation_id: conversation_id || null, scope: 'mic' },
+      { sub: me.sub || me.id || 'u_demo', conversation_id, scope: 'mic' },
       JWT_SECRET,
       { expiresIn: WS_TOKEN_TTL_SEC }
     );
 
-    console.debug('[ws-token] issued', { user: me.email || me.sub, ttl: WS_TOKEN_TTL_SEC, conversation_id });
+    console.debug('[ws-token] issued', {
+      user: me.email || me.sub,
+      ttl: WS_TOKEN_TTL_SEC,
+      conversation_id,
+    });
     return res.json({ token: wsToken });
   } catch {
     return res.status(401).json({ error: 'invalid_token' });
