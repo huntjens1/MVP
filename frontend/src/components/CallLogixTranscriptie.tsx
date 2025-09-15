@@ -1,12 +1,14 @@
-// frontend/src/components/CallLogixTranscriptie.tsx
 import { useEffect, useRef, useState } from "react";
 import api, { type TicketSkeleton, type TicketOverrides } from "../api";
 import { startMicPcm16k, type MicStopper } from "../lib/capturePcm16k";
 import { maskPII } from "../utils/pii";
 import RightPanel, { type Classification } from "./RightPanel";
+import { createSSEClient } from "../lib/sseClient";
 
 type DGAlt = { transcript?: string; words?: Array<{ speaker?: number }> };
-type DGRealtime = { channel?: { alternatives?: DGAlt[]; is_final?: boolean }; alternatives?: DGAlt[]; is_final?: boolean } | any;
+type DGRealtime =
+  | { channel?: { alternatives?: DGAlt[]; is_final?: boolean }; alternatives?: DGAlt[]; is_final?: boolean }
+  | any;
 
 type Segment = { id: string; speaker: "Agent" | "Klant"; text: string; final: boolean; flagged: boolean };
 
@@ -22,7 +24,6 @@ export default function CallLogixTranscriptie() {
   const [slaBadge, setSlaBadge] = useState<string>("P4 · TTR ~48u");
   const [summary, setSummary] = useState<string>("");
 
-  // ITIL intake state
   const [classif, setClassif] = useState<Classification>({
     type: "Incident",
     impact: "Low",
@@ -31,20 +32,20 @@ export default function CallLogixTranscriptie() {
     ci: "",
   });
 
-  // infra
   const wsRef = useRef<WebSocket | null>(null);
   const micStopRef = useRef<MicStopper | null>(null);
   const convoIdRef = useRef<string>("");
-  const sseSuggestRef = useRef<EventSource | null>(null);
-  const sseAssistRef = useRef<EventSource | null>(null);
+  const sseSuggestRef = useRef<ReturnType<typeof createSSEClient> | null>(null);
+  const sseAssistRef = useRef<ReturnType<typeof createSSEClient> | null>(null);
   const debounceTicket = useRef<number | null>(null);
   const lastActivityRef = useRef<number>(Date.now());
   const [coach, setCoach] = useState<string>("");
   const lastContextRef = useRef<string>("");
 
+  const [sseStatus, setSseStatus] = useState<"connecting" | "open" | "reconnecting" | "closed">("closed");
+
   useEffect(() => () => { void stopRecording(); }, []);
 
-  // Dead-air coach
   useEffect(() => {
     const iv = setInterval(() => {
       if (!recording) return;
@@ -102,7 +103,6 @@ export default function CallLogixTranscriptie() {
           const ctx = lastN(next, 4);
           lastContextRef.current = ctx;
 
-          // triggers
           void api.suggest(convoIdRef.current, ctx).catch(() => {});
           void api.assist(convoIdRef.current, ctx).catch(() => {});
           if (debounceTicket.current) window.clearTimeout(debounceTicket.current);
@@ -118,11 +118,11 @@ export default function CallLogixTranscriptie() {
   }
 
   function priFromIU(urg: Classification["urgency"], imp: Classification["impact"]): Classification["priority"] {
-    const map = { Low: 4, Medium: 3, High: 2, Critical: 1 };
+    const map = { Low: 4, Medium: 3, High: 2, Critical: 1 } as const;
     const u = map[urg] ?? 3;
     const i = map[imp] ?? 4;
     const p = Math.min(4, Math.max(1, Math.round((u + i) / 2)));
-    return (`P${p}` as Classification["priority"]);
+    return `P${p}` as Classification["priority"];
   }
 
   function formatTTR(mins: number) {
@@ -136,7 +136,7 @@ export default function CallLogixTranscriptie() {
   }
 
   // ---------- SSE handlers ----------
-  function parseJSON(raw: any) { try { return typeof raw === "string" ? JSON.parse(raw) : raw; } catch { return {}; } }
+  const parseJSON = (raw: any) => { try { return typeof raw === "string" ? JSON.parse(raw) : raw; } catch { return {}; } };
 
   function fallbackQuestions(ctx: string): string[] {
     const q: string[] = [];
@@ -154,10 +154,8 @@ export default function CallLogixTranscriptie() {
     const d: any = parseJSON(raw) ?? {};
     const cid = d.conversation_id ?? d.conversationId ?? null;
     if (cid && cid !== convoIdRef.current) return;
-    const list =
-      d.suggestions ?? d.items ?? d.list ?? d.payload?.suggestions ?? (Array.isArray(d) ? d : []);
+    const list = d.suggestions ?? d.items ?? d.list ?? d.payload?.suggestions ?? (Array.isArray(d) ? d : []);
     let out = Array.isArray(list) ? list : [];
-    // zorg voor minimaal 3 suggesties
     if (out.length < 3) out = [...out, ...fallbackQuestions(lastContextRef.current)];
     setSuggestions(Array.from(new Set(out)).slice(0, 6));
   }
@@ -166,26 +164,58 @@ export default function CallLogixTranscriptie() {
     const d: any = parseJSON(raw) ?? {};
     const cid = d.conversation_id ?? d.conversationId ?? null;
     if (cid && cid !== convoIdRef.current) return;
-    const actions =
-      d.actions ?? d.nextActions ?? d.nextBestActions ?? d.next_best_actions ?? d.payload?.actions ?? [];
+    const actions = d.actions ?? d.nextActions ?? d.nextBestActions ?? d.next_best_actions ?? d.payload?.actions ?? [];
     const steps = d.runbook_steps ?? d.runbook ?? d.steps ?? d.payload?.runbook ?? [];
     if (Array.isArray(actions)) setNextActions(actions);
     if (Array.isArray(steps)) setRunbook(steps);
   }
 
-  async function openStreams() {
-    const esSug = api.suggestStream(convoIdRef.current);
-    sseSuggestRef.current = esSug;
-    esSug.addEventListener("suggestions", (ev: MessageEvent) => { try { handleSuggestionsEvent(ev.data); } catch {} });
-    esSug.onmessage = (ev: MessageEvent) => { try { handleSuggestionsEvent(ev.data); } catch {} };
+  function openStreams() {
+    const base = (import.meta.env.VITE_API_BASE_URL as string) || "";
 
-    const esAss = api.assistStream(convoIdRef.current);
-    sseAssistRef.current = esAss;
-    esAss.addEventListener("assist", (ev: MessageEvent) => { try { handleAssistEvent(ev.data); } catch {} });
-    esAss.onmessage = (ev: MessageEvent) => { try { handleAssistEvent(ev.data); } catch {} };
+    const sug = createSSEClient(
+      {
+        urlFactory: (lastId?: string) => {
+          const url = new URL(`${base}/api/suggestions`);
+          url.searchParams.set("conversation_id", convoIdRef.current);
+          if (lastId) url.searchParams.set("last_event_id", lastId);
+          return url.toString();
+        },
+        withCredentials: true,
+        channels: ["suggestions"],
+        minBackoffMs: 600,
+        maxBackoffMs: 8000,
+        maxJitterMs: 500,
+      },
+      {
+        onStatus: setSseStatus,
+        onEvent: (ev) => { try { handleSuggestionsEvent((ev as MessageEvent).data); } catch {} },
+      }
+    );
+    sug.start();
+    sseSuggestRef.current = sug;
 
-    esSug.onerror = () => {};
-    esAss.onerror = () => {};
+    const ass = createSSEClient(
+      {
+        urlFactory: (lastId?: string) => {
+          const url = new URL(`${base}/api/assist-stream`);
+          url.searchParams.set("conversation_id", convoIdRef.current);
+          if (lastId) url.searchParams.set("last_event_id", lastId);
+          return url.toString();
+        },
+        withCredentials: true,
+        channels: ["assist"],
+        minBackoffMs: 600,
+        maxBackoffMs: 8000,
+        maxJitterMs: 500,
+      },
+      {
+        onStatus: setSseStatus,
+        onEvent: (ev) => { try { handleAssistEvent((ev as MessageEvent).data); } catch {} },
+      }
+    );
+    ass.start();
+    sseAssistRef.current = ass;
   }
 
   async function rebuildTicket(ctx: string) {
@@ -205,7 +235,7 @@ export default function CallLogixTranscriptie() {
       if (typeof ttrMin === "number") setSlaBadge(`${sk.priority ?? "P4"} · TTR ~${formatTTR(ttrMin)}`);
       else {
         const p = priFromIU(classif.urgency, classif.impact);
-        setSlaBadge(`${sk.priority ?? p} · TTR ~${(p === "P1" ? 4 : p === "P2" ? 8 : p === "P3" ? 24 : 48)}u`);
+        setSlaBadge(`${sk.priority ?? p} · TTR ~${p === "P1" ? "4u" : p === "P2" ? "8u" : p === "P3" ? "24u" : "48u"}`);
       }
     } catch { /* ignore */ }
   }
@@ -217,7 +247,7 @@ export default function CallLogixTranscriptie() {
     setClassif((c) => ({ ...c, priority: "P4" }));
     convoIdRef.current = crypto.randomUUID();
 
-    await openStreams();
+    openStreams();
 
     const t = await api.wsToken();
     const wsUrl = buildWsUrl(t.token);
@@ -243,14 +273,14 @@ export default function CallLogixTranscriptie() {
     micStopRef.current = null;
     try { wsRef.current?.close(1000, "user_stop"); } catch {}
     wsRef.current = null;
-    try { sseSuggestRef.current?.close(); } catch {}
+    try { sseSuggestRef.current?.stop("stop_recording"); } catch {}
     sseSuggestRef.current = null;
-    try { sseAssistRef.current?.close(); } catch {}
+    try { sseAssistRef.current?.stop("stop_recording"); } catch {}
     sseAssistRef.current = null;
     if (debounceTicket.current) { window.clearTimeout(debounceTicket.current); debounceTicket.current = null; }
+    setSseStatus("closed");
   }
 
-  // watch intake (impact/urgency) → priority
   useEffect(() => {
     setClassif((c) => ({ ...c, priority: priFromIU(c.urgency, c.impact) }));
   }, [classif.urgency, classif.impact]);
@@ -277,6 +307,10 @@ export default function CallLogixTranscriptie() {
 
             <span style={{ padding: "6px 10px", borderRadius: 999, background: recording ? "rgba(239,68,68,.1)" : "rgba(17,24,39,.06)", color: recording ? "#ef4444" : "#111827", fontWeight: 600 }}>
               {recording ? "Live…" : "Niet actief"}
+            </span>
+
+            <span title="Realtime status (SSE)" style={{ padding: "6px 10px", border: "1px solid #e5e7eb", borderRadius: 999, background: "#fff" }}>
+              {sseStatus === "open" ? "Realtime: verbonden" : sseStatus === "reconnecting" ? "Realtime: herstellen…" : sseStatus === "connecting" ? "Realtime: verbinden…" : "Realtime: uit"}
             </span>
 
             <span style={{ marginLeft: "auto", padding: "6px 10px", border: "1px solid #e5e7eb", borderRadius: 999, background: "#fff", fontWeight: 700 }}>
