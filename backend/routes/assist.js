@@ -1,57 +1,90 @@
 // backend/routes/assist.js
-const express = require('express');
-const { requireAuth } = require('../middlewares/auth');
-const { emit: emitAssist, emitToUser: emitAssistToUser } = require('../streams/assistSSE');
-const { generateSuggestionsNL } = require('../services/openai');
-
+// POST /api/assist  +  SSE broadcast naar assistSSE
+const express = require("express");
 const router = express.Router();
+const { publish: pushAssist } = require("../streams/assistSSE");
+const OpenAI = require("openai");
 
-// POST /api/assist
-// Body: { conversation_id, transcript?, context? }
-router.post('/assist', requireAuth, async (req, res) => {
-  const { conversation_id, transcript = '', context = {} } = req.body || {};
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const MODEL = process.env.ASSIST_MODEL || "gpt-4o-mini";
+
+function cleanText(s) {
+  if (!s) return "";
+  let t = String(s).trim();
+  t = t.replace(/\s*[{[].*[\]}]\s*$/s, "");
+  t = t.replace(/^\s*[-*•\d\)\.]+\s*/g, "");
+  t = t.replace(/\s+/g, " ").trim();
+  return t;
+}
+
+function normalizeArray(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.map(cleanText).filter(Boolean);
   try {
-    const suggestions = await generateSuggestionsNL(transcript, context, 3);
+    const parsed = JSON.parse(String(raw));
+    if (Array.isArray(parsed)) return parsed.map(cleanText).filter(Boolean);
+  } catch {}
+  return String(raw)
+    .split(/\r?\n+/)
+    .map((l) => l.replace(/^\s*[-*•\d\)\.]+\s*/, ""))
+    .map(cleanText)
+    .filter(Boolean);
+}
 
-    // Normaliseer “actions” keys voor brede UI-compatibiliteit
-    const actions = suggestions.map(s => s.text).slice(0, 3);
-    const intent  = suggestions?.[0]?.itil?.type || 'Follow-up';
+router.post("/api/assist", async (req, res) => {
+  const t0 = Date.now();
+  try {
+    const user = req.user?.email || null;
+    const { conversation_id, transcript } = req.body || {};
+    if (!conversation_id) return res.status(400).json({ error: "conversation_id is required" });
 
-    const payload = {
-      type: 'assist',
-      conversation_id: conversation_id || null,
-      intent,
+    let actions = [];
+    try {
+      const system = [
+        "Je bent een NL servicedesk-assistent (ITIL v4).",
+        "Geef concrete, uitvoerbare stappen (Next-Best-Actions) voor de agent.",
+        "Uitsluitend puntsgewijze stappen; geen JSON, geen lange verhalen. 3–6 items."
+      ].join(" ");
+      const prompt = `Context:
+"""${(transcript || "").slice(0, 1600)}"""
+Geef 3–6 concrete stappen (één per regel).`;
 
-      // aliases zodat elke UI iets kan vinden:
-      actions,                      // veel UIs lezen deze
-      nextActions: actions,         // camelCase
-      nextBestActions: actions,     // camelCase gebruikt in sommige builds
-      next_best_actions: actions,   // snake_case (bestaand)
-      runbook_steps: [],
+      const r = await openai.chat.completions.create({
+        model: MODEL,
+        temperature: 0.2,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: prompt },
+        ],
+      });
 
-      // optionele “envelope” voor UIs die data.payload verwachten
-      payload: {
-        intent,
-        actions,
-      },
-    };
+      const raw = r.choices?.[0]?.message?.content || "";
+      actions = normalizeArray(raw);
+    } catch (err) {
+      console.log("[assist] openai error", { error: String(err) });
+    }
 
-    // 1) Emit naar expliciete conversatie (indien aanwezig)
-    if (conversation_id) emitAssist(conversation_id, payload);
+    if (actions.length === 0) {
+      actions = [
+        "Vraag om exacte foutmelding en laatste werkende moment.",
+        "Bepaal impact (aantal gebruikers/locaties) en urgentie.",
+        "Herproduceer het probleem en leg bevindingen vast.",
+      ];
+    }
 
-    // 2) Altijd ook naar alle actieve conversaties van de ingelogde user
-    if (req.user?.id) emitAssistToUser(req.user.id, payload);
+    pushAssist(conversation_id, { conversation_id, actions });
 
-    console.debug('[assist] emitted', {
-      conversation_id: conversation_id || null,
+    console.log("[assist] emitted", {
+      conversation_id,
       actions: actions.length,
-      user: req.user?.email,
+      user,
+      ms: Date.now() - t0,
     });
 
-    return res.json({ suggestion: suggestions?.[0]?.text || '' });
+    return res.json({ suggestion: actions[0] || null, actions });
   } catch (err) {
-    console.error('[assist] error', { error: err?.message });
-    return res.status(500).json({ error: 'assist_failed' });
+    console.log("[assist] error", { error: String(err) });
+    return res.status(500).json({ error: "assist_failed" });
   }
 });
 

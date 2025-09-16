@@ -1,44 +1,45 @@
 // backend/routes/wsToken.js
-const express = require('express');
-const jwt = require('jsonwebtoken');
-
+const express = require("express");
+const jwt = require("jsonwebtoken");
 const router = express.Router();
+const { normalizeTenant } = require("../utils/keywords");
 
-const JWT_SECRET = process.env.JWT_SECRET || process.env.AUTH_SECRET || 'change-me';
-const WS_TOKEN_TTL_SEC = Number(process.env.WS_TOKEN_TTL_SEC || 600);
+const JWT_SECRET = process.env.JWT_SECRET || "change-me";
+const TTL_SECONDS = 10 * 60;
 
-function readAuthToken(req) {
-  const hdr = req.headers.authorization || '';
-  const m = /^Bearer\s+(.+)$/i.exec(hdr);
-  if (m) return m[1];
-  if (req.signedCookies && req.signedCookies.auth) return req.signedCookies.auth;
-  if (req.cookies && req.cookies.auth) return req.cookies.auth;
-  return null;
+function inferTenant(req, user) {
+  // 1) expliciete header
+  let t = (req.headers["x-tenant"] || req.headers["x-tenant-id"] || "").toString().trim();
+  // 2) fallback: domein van e-mail (eerste label)
+  if (!t && user?.email) {
+    const dom = (user.email.split("@")[1] || "").toLowerCase();
+    t = (dom.split(".")[0] || "").trim();
+  }
+  return normalizeTenant(t);
 }
 
-// POST /api/ws-token
-router.post('/ws-token', (req, res) => {
-  const token = readAuthToken(req);
-  if (!token) return res.status(401).json({ error: 'unauthorized' });
-
+router.post("/api/ws-token", (req, res) => {
   try {
-    const me = jwt.verify(token, JWT_SECRET);
-    const conversation_id = (req.body && req.body.conversation_id) || (req.query && req.query.conversation_id) || null;
+    const user = req.user || null;
+    const sub = user?.id || user?.user_id || null;
+    const email = user?.email || null;
+    const tenant = inferTenant(req, user);
 
-    const wsToken = jwt.sign(
-      { sub: me.sub || me.id || 'u_demo', conversation_id, scope: 'mic' },
-      JWT_SECRET,
-      { expiresIn: WS_TOKEN_TTL_SEC }
-    );
+    const payload = {
+      sub: sub || "anon",
+      scope: "mic",
+      agent: email ? { email } : undefined,
+      tenant,
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + TTL_SECONDS,
+    };
 
-    console.debug('[ws-token] issued', {
-      user: me.email || me.sub,
-      ttl: WS_TOKEN_TTL_SEC,
-      conversation_id,
-    });
-    return res.json({ token: wsToken });
-  } catch {
-    return res.status(401).json({ error: 'invalid_token' });
+    const token = jwt.sign(payload, JWT_SECRET, { algorithm: "HS256" });
+    console.log("[ws-token] issued", { user: email || null, tenant, ttl: TTL_SECONDS, conversation_id: req.body?.conversation_id });
+    return res.json({ token });
+  } catch (err) {
+    console.log("[ws-token] error", { error: String(err) });
+    return res.status(500).json({ error: "token_failed" });
   }
 });
 
