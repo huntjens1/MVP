@@ -1,7 +1,5 @@
 // backend/utils/keywords.js
 // Centrale keyword-utility met tenant-ondersteuning.
-// Laadt DG_KEYWORDS_<TENANT> (fallback naar DG_KEYWORDS), voegt agentnaam toe,
-// sane defaults, unieke compact lijst.
 
 const MAX_ITEMS = 40;
 const MAX_TOKEN_LEN = 48;
@@ -13,11 +11,9 @@ function splitCsv(str) {
     .map((s) => s.trim())
     .filter(Boolean);
 }
-
 function titleCase(s) {
   return s.length ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : s;
 }
-
 function sanitize(list) {
   return list
     .map((x) => String(x).trim())
@@ -26,7 +22,6 @@ function sanitize(list) {
     .filter((x) => x.length <= MAX_TOKEN_LEN)
     .filter((x) => !/^[\W_]+$/.test(x));
 }
-
 function uniqueCaseFold(list) {
   const seen = new Set();
   const out = [];
@@ -42,7 +37,10 @@ function uniqueCaseFold(list) {
 
 // ----- Tenant helpers -----
 function normalizeTenant(tenant) {
-  const t = String(tenant || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const t = String(tenant || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
   return t || "default";
 }
 function envKeyForTenant(tenant) {
@@ -78,8 +76,4 @@ function buildKeywordList({ tenant, agentEmail, extra = [] } = {}) {
   return merged.slice(0, MAX_ITEMS);
 }
 
-module.exports = {
-  buildKeywordList,
-  normalizeTenant,
-  envKeyForTenant,
-};
+module.exports = { buildKeywordList, normalizeTenant, envKeyForTenant };
