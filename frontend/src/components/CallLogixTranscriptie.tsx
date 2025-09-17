@@ -25,11 +25,30 @@ type Segment = {
   flagged: boolean;
 };
 
+/** ITIL classificatie voor het ticketpaneel */
+type Classification = {
+  type: "Incident" | "Service Request";
+  impact: "Low" | "Medium" | "High" | "Critical";
+  urgency: "Low" | "Medium" | "High" | "Critical";
+  priority: "P1" | "P2" | "P3" | "P4";
+  ci?: string;
+};
+
 function lastN(list: Segment[], n: number): string {
   return list
     .slice(Math.max(0, list.length - n))
     .map((s) => `${s.speaker}: ${s.text}`)
     .join(" ");
+}
+
+function computePriority(impact: Classification["impact"], urgency: Classification["urgency"]): Classification["priority"] {
+  const M = {
+    Critical: { Critical: "P1", High: "P1", Medium: "P1", Low: "P2" },
+    High:     { Critical: "P1", High: "P2", Medium: "P2", Low: "P3" },
+    Medium:   { Critical: "P2", High: "P2", Medium: "P3", Low: "P3" },
+    Low:      { Critical: "P2", High: "P3", Medium: "P3", Low: "P4" },
+  } as const;
+  return M[impact][urgency];
 }
 
 export default function CallLogixTranscriptie() {
@@ -42,6 +61,16 @@ export default function CallLogixTranscriptie() {
   const [runbook, setRunbook] = useState<string[]>([]);
   const [ticket, setTicket] = useState<TicketSkeleton | null>(null);
   const [slaBadge, setSlaBadge] = useState<string>("P4 · TTR ~48u");
+  const [summary, setSummary] = useState<string>("");
+
+  // ITIL classificatie (met veilige defaults)
+  const [classification, setClassification] = useState<Classification>({
+    type: "Incident",
+    impact: "Low",
+    urgency: "Low",
+    priority: "P4",
+    ci: "",
+  });
 
   // infra
   const wsRef = useRef<WebSocket | null>(null);
@@ -55,10 +84,7 @@ export default function CallLogixTranscriptie() {
   const [coach, setCoach] = useState<string>("");
 
   useEffect(() => {
-    return () => {
-      void stopRecording();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { void stopRecording(); };
   }, []);
 
   // Dead-air coach
@@ -84,22 +110,18 @@ export default function CallLogixTranscriptie() {
     url.searchParams.set("smart_format", "true");
     url.searchParams.set("interim_results", "true");
     url.searchParams.set("diarize", "true");
-    // Keywords worden server-side bepaald
     return url.toString();
   }
 
   function handleDG(msg: DGRealtime) {
     const alt: DGAlt | null =
-      msg?.channel?.alternatives?.[0] ??
-      msg?.alternatives?.[0] ??
-      null;
+      msg?.channel?.alternatives?.[0] ?? msg?.alternatives?.[0] ?? null;
     const isFinal = Boolean(msg?.channel?.is_final ?? msg?.is_final);
     const textRaw = (alt?.transcript || "").trim();
     if (!textRaw && !isFinal) return;
 
     lastActivityRef.current = Date.now();
 
-    // speakerkeuze
     let speaker: "Agent" | "Klant" = "Klant";
     const sp = (alt?.words as DGWord[] | undefined)?.find((w: DGWord) => typeof w.speaker === "number")?.speaker;
     if (sp === 1) speaker = "Agent";
@@ -110,13 +132,7 @@ export default function CallLogixTranscriptie() {
 
       const { masked, flagged } = maskPII(textRaw);
       setSegments((list) => {
-        const seg: Segment = {
-          id: crypto.randomUUID(),
-          speaker,
-          text: masked,
-          final: true,
-          flagged,
-        };
+        const seg: Segment = { id: crypto.randomUUID(), speaker, text: masked, final: true, flagged };
         const next = [...list, seg];
         const ctx = lastN(next, 4);
 
@@ -130,20 +146,16 @@ export default function CallLogixTranscriptie() {
           try {
             const r = await api.ticketSkeleton(convoIdRef.current, ctx); // => { ticket }
             setTicket(r.ticket);
-            // TTR-badge (fallback 48u als onbekend)
             const minutes = (r.ticket as any)?.ttr_minutes ?? 48 * 60;
             setSlaBadge(`${r.ticket?.priority ?? "P4"} · TTR ~${Math.round(minutes / 60)}u`);
-          } catch {
-            /* ignore */
-          }
+          } catch {}
         }, 1200);
 
-        // optioneel ingest (types accepteren alleen {conversation_id, content}; extra via any)
+        // optioneel ingest
         void api
           .ingestTranscript({
             conversation_id: convoIdRef.current,
             content: masked,
-            // extra met cast (backend accepteert dit)
             is_final: true,
             speaker_label: speaker === "Agent" ? "agent" : "customer",
           } as any)
@@ -166,9 +178,7 @@ export default function CallLogixTranscriptie() {
         const data = JSON.parse(ev.data) as { conversation_id: string; suggestions: string[] };
         if (data.conversation_id !== convoIdRef.current) return;
         setSuggestions(data.suggestions || []);
-      } catch {
-        /* ignore */
-      }
+      } catch {}
     });
     esSug.onerror = () => {};
 
@@ -187,15 +197,15 @@ export default function CallLogixTranscriptie() {
         if (data.conversation_id !== convoIdRef.current) return;
         setNextActions((data.next_best_actions || data.actions || []) as string[]);
         setRunbook((data.runbook_steps || data.runbook || []) as string[]);
-      } catch {
-        /* ignore */
-      }
+      } catch {}
     });
     esAss.onerror = () => {};
   }
 
   async function startRecording() {
     if (recording) return;
+
+    // reset UI-state
     setSegments([]);
     setInterim("");
     setSuggestions([]);
@@ -203,6 +213,7 @@ export default function CallLogixTranscriptie() {
     setRunbook([]);
     setTicket(null);
     setSlaBadge("P4 · TTR ~48u");
+    setSummary("");
 
     convoIdRef.current = crypto.randomUUID();
 
@@ -216,28 +227,17 @@ export default function CallLogixTranscriptie() {
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
-      ws.onopen = () => {
-        setWsConnected(true);
-        setRecording(true);
-      };
-      ws.onclose = () => {
-        setWsConnected(false);
-        setRecording(false);
-      };
-      ws.onerror = () => {
-        setWsConnected(false);
-      };
+      ws.onopen = () => { setWsConnected(true); setRecording(true); };
+      ws.onclose = () => { setWsConnected(false); setRecording(false); };
+      ws.onerror = () => { setWsConnected(false); };
       ws.onmessage = (ev) => {
         try {
           const payload = typeof ev.data === "string" ? ev.data : new TextDecoder().decode(ev.data as ArrayBuffer);
           const msg = JSON.parse(payload);
           handleDG(msg as DGRealtime);
-        } catch {
-          // ignore non-json
-        }
+        } catch { /* ignore */ }
       };
 
-      // microfoon direct naar ws (jullie implementatie verwacht een WebSocket)
       const stop = await startMicPcm16k(ws);
       micStopRef.current = stop;
     } catch (err) {
@@ -248,51 +248,80 @@ export default function CallLogixTranscriptie() {
 
   async function stopRecording() {
     try {
-      if (micStopRef.current) {
-        await micStopRef.current();
-        micStopRef.current = null;
-      }
+      if (micStopRef.current) { await micStopRef.current(); micStopRef.current = null; }
     } catch {}
-    try {
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) wsRef.current.close(1000);
-    } catch {}
+    try { if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) wsRef.current.close(1000); } catch {}
     wsRef.current = null;
     setWsConnected(false);
     setRecording(false);
 
-    try {
-      sseSuggestRef.current?.close();
-      sseAssistRef.current?.close();
-    } catch {}
+    try { sseSuggestRef.current?.close(); sseAssistRef.current?.close(); } catch {}
     sseSuggestRef.current = null;
     sseAssistRef.current = null;
 
-    if (debounceTicket.current) {
-      window.clearTimeout(debounceTicket.current);
-      debounceTicket.current = null;
+    if (debounceTicket.current) { window.clearTimeout(debounceTicket.current); debounceTicket.current = null; }
+  }
+
+  // ====== Callbacks voor RightPanel ======
+
+  function onClassificationChange(patch: Partial<Classification>) {
+    setClassification((prev) => {
+      const next: Classification = { ...prev, ...patch };
+      next.priority = computePriority(next.impact, next.urgency);
+      return next;
+    });
+  }
+
+  async function onRebuildTicket() {
+    try {
+      const ctx = lastN(segments, 8);
+      const r = await api.ticketSkeleton(convoIdRef.current, ctx);
+      setTicket(r.ticket);
+      const minutes = (r.ticket as any)?.ttr_minutes ?? 48 * 60;
+      setSlaBadge(`${r.ticket?.priority ?? "P4"} · TTR ~${Math.round(minutes / 60)}u`);
+    } catch (e) {
+      console.debug("[ui] rebuildTicket failed", e);
     }
   }
+
+async function onSummarize() {
+  try {
+    const ctx = lastN(segments, 16);
+    let r: any;
+
+    // We gebruiken 'any' om verschillende mogelijke signatures te proberen
+    const summarizeAny = (api as any).summarize;
+
+    if (typeof summarizeAny === "function") {
+      // 1) Probeer (conversationId, content)
+      try {
+        r = await summarizeAny(convoIdRef.current, ctx);
+      } catch {
+        // 2) Probeer (content: string)
+        try {
+          r = await summarizeAny(ctx);
+        } catch {
+          // 3) Probeer ({ conversation_id, content })
+          r = await summarizeAny({ conversation_id: convoIdRef.current, content: ctx });
+        }
+      }
+    }
+
+    setSummary(r?.summary ?? r?.text ?? "");
+  } catch (e) {
+    console.debug("[ui] summarize failed", e);
+  }
+}
+
 
   // Hotkeys
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey && e.shiftKey)) return;
-      if (e.code === "KeyS") {
-        e.preventDefault();
-        recording ? void stopRecording() : void startRecording();
-      }
-      if (e.code === "KeyD") {
-        e.preventDefault();
-        navigator.clipboard.writeText(segments.map((s) => s.text).join(" ").slice(0, 4000));
-      }
-      if (e.code === "KeyK") {
-        e.preventDefault();
-        if (suggestions[0]) navigator.clipboard.writeText(suggestions[0]);
-      }
-      if (e.code === "KeyN") {
-        e.preventDefault();
-        if (nextActions[0]) navigator.clipboard.writeText(nextActions[0]);
-      }
+      if (e.code === "KeyS") { e.preventDefault(); recording ? void stopRecording() : void startRecording(); }
+      if (e.code === "KeyD") { e.preventDefault(); navigator.clipboard.writeText(segments.map((s) => s.text).join(" ").slice(0, 4000)); }
+      if (e.code === "KeyK") { e.preventDefault(); if (suggestions[0]) navigator.clipboard.writeText(suggestions[0]); }
+      if (e.code === "KeyN") { e.preventDefault(); if (nextActions[0]) navigator.clipboard.writeText(nextActions[0]); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -395,8 +424,18 @@ export default function CallLogixTranscriptie() {
         </div>
       </div>
 
-      {/* als TS over Props van RightPanel klaagt in jouw lokale types, casten we de component (non-breaking) */}
-      {(RightPanel as any)({ suggestions, nextActions, runbook, ticket })}
+      {/* Paneel als normale React component met alle props */}
+      <RightPanel
+        suggestions={suggestions}
+        nextActions={nextActions}
+        runbook={runbook}
+        ticket={ticket}
+        classification={classification}
+        onClassificationChange={onClassificationChange}
+        onRebuildTicket={onRebuildTicket}
+        summary={summary}
+        onSummarize={onSummarize}
+      />
     </div>
   );
 }

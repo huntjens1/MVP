@@ -1,4 +1,3 @@
-// frontend/src/components/RightPanel.tsx
 import React, { useMemo, useState } from "react";
 import type { TicketSkeleton } from "../api";
 
@@ -12,26 +11,34 @@ export type Classification = {
   ci?: string;
 };
 
+const DEFAULT_CLASSIFICATION: Classification = {
+  type: "Incident",
+  impact: "Low",
+  urgency: "Low",
+  priority: "P4",
+  ci: "",
+};
+
 export default function RightPanel({
-  nextActions,
-  runbook,
-  suggestions,
-  ticket,
-  classification,
-  onClassificationChange,
-  onRebuildTicket,
-  summary,
-  onSummarize,
+  nextActions = [],
+  runbook = [],
+  suggestions = [],
+  ticket = null,
+  classification = DEFAULT_CLASSIFICATION,
+  onClassificationChange = () => {},
+  onRebuildTicket = () => {},
+  summary = "",
+  onSummarize = () => {},
 }: {
-  nextActions: string[];
-  runbook: string[];
-  suggestions: string[];
-  ticket: TicketSkeleton | null;
-  classification: Classification;
-  onClassificationChange: (c: Partial<Classification>) => void;
-  onRebuildTicket: () => void;
-  summary: string;
-  onSummarize: () => void;
+  nextActions?: string[];
+  runbook?: string[];
+  suggestions?: string[];
+  ticket?: TicketSkeleton | null;
+  classification?: Classification;
+  onClassificationChange?: (c: Partial<Classification>) => void;
+  onRebuildTicket?: () => void;
+  summary?: string;
+  onSummarize?: () => void;
 }) {
   const [tab, setTab] = useState<Tab>("actions");
 
@@ -49,24 +56,14 @@ export default function RightPanel({
       }}
     >
       <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-        <TabBtn onClick={() => setTab("actions")} active={tab === "actions"}>
-          Next-Best-Actions
-        </TabBtn>
-        <TabBtn onClick={() => setTab("suggestions")} active={tab === "suggestions"}>
-          Suggesties
-        </TabBtn>
-        <TabBtn onClick={() => setTab("ticket")} active={tab === "ticket"}>
-          Ticket
-        </TabBtn>
-        <TabBtn onClick={() => setTab("summary")} active={tab === "summary"}>
-          Samenvatting
-        </TabBtn>
+        <TabBtn onClick={() => setTab("actions")} active={tab === "actions"}>Next-Best-Actions</TabBtn>
+        <TabBtn onClick={() => setTab("suggestions")} active={tab === "suggestions"}>Suggesties</TabBtn>
+        <TabBtn onClick={() => setTab("ticket")} active={tab === "ticket"}>Ticket</TabBtn>
+        <TabBtn onClick={() => setTab("summary")} active={tab === "summary"}>Samenvatting</TabBtn>
       </div>
 
       {tab === "actions" && <Actions nextActions={nextActions} runbook={runbook} />}
-
       {tab === "suggestions" && <Suggestions suggestions={suggestions} />}
-
       {tab === "ticket" && (
         <TicketPanel
           ticket={ticket}
@@ -75,10 +72,7 @@ export default function RightPanel({
           onRebuild={onRebuildTicket}
         />
       )}
-
-      {tab === "summary" && (
-        <SummaryPanel summary={summary} onSummarize={onSummarize} />
-      )}
+      {tab === "summary" && <SummaryPanel summary={summary} onSummarize={onSummarize} />}
     </aside>
   );
 }
@@ -91,9 +85,7 @@ function Actions({ nextActions, runbook }: { nextActions: string[]; runbook: str
         <Empty text="Nog geen acties…" />
       ) : (
         <ol style={{ paddingLeft: 18 }}>
-          {nextActions.map((a, i) => (
-            <li key={i} style={{ margin: "6px 0" }}>{a}</li>
-          ))}
+          {nextActions.map((a, i) => (<li key={i} style={{ margin: "6px 0" }}>{a}</li>))}
         </ol>
       )}
 
@@ -101,16 +93,13 @@ function Actions({ nextActions, runbook }: { nextActions: string[]; runbook: str
         <>
           <h4 style={{ marginTop: 14 }}>Runbook</h4>
           <ol style={{ paddingLeft: 18 }}>
-            {runbook.map((s, i) => (
-              <li key={i} style={{ margin: "4px 0" }}>{s}</li>
-            ))}
+            {runbook.map((s, i) => (<li key={i} style={{ margin: "4px 0" }}>{s}</li>))}
           </ol>
         </>
       )}
 
       <p style={{ marginTop: 12, opacity: .7 }}>
-        <strong>Uitleg:</strong> <em>Next-Best-Actions</em> = concrete handelingen
-        (doen). <em>Suggesties</em> = vragen om context te verzamelen (vragen).
+        <strong>Uitleg:</strong> <em>Next-Best-Actions</em> = concrete handelingen (doen). <em>Suggesties</em> = vragen om context te verzamelen (vragen).
       </p>
     </div>
   );
@@ -119,9 +108,7 @@ function Actions({ nextActions, runbook }: { nextActions: string[]; runbook: str
 function Suggestions({ suggestions }: { suggestions: string[] }) {
   const min3 = useMemo(() => {
     const base = suggestions.filter(Boolean);
-    while (base.length < 3) {
-      base.push("Heeft u een exacte foutmelding of referentie die we kunnen noteren?");
-    }
+    while (base.length < 3) base.push("Heeft u een exacte foutmelding of referentie die we kunnen noteren?");
     return base.slice(0, 6);
   }, [suggestions]);
 
@@ -129,9 +116,7 @@ function Suggestions({ suggestions }: { suggestions: string[] }) {
     <div>
       <h3 style={{ margin: "6px 0 8px" }}>AI Vraagsuggesties</h3>
       <ul style={{ paddingLeft: 14 }}>
-        {min3.map((s, i) => (
-          <li key={i} style={{ margin: "6px 0" }}>{s}</li>
-        ))}
+        {min3.map((s, i) => (<li key={i} style={{ margin: "6px 0" }}>{s}</li>))}
       </ul>
     </div>
   );
@@ -157,10 +142,7 @@ function TicketPanel({
 
         <Row>
           <KV k="Type">
-            <select
-              value={classification.type}
-              onChange={(e) => onChange({ type: e.target.value as any })}
-            >
+            <select value={classification.type} onChange={(e) => onChange({ type: e.target.value as any })}>
               <option>Incident</option>
               <option>Service Request</option>
             </select>
@@ -190,16 +172,7 @@ function TicketPanel({
 
         <button
           onClick={onRebuild}
-          style={{
-            marginTop: 6,
-            padding: "8px 10px",
-            borderRadius: 8,
-            border: "1px solid #e5e7eb",
-            background: "#111827",
-            color: "#fff",
-            fontWeight: 700,
-            cursor: "pointer",
-          }}
+          style={{ marginTop: 6, padding: "8px 10px", borderRadius: 8, border: "1px solid #e5e7eb", background: "#111827", color: "#fff", fontWeight: 700, cursor: "pointer" }}
         >
           Herbereken ticket
         </button>
